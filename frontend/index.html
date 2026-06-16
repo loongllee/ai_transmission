@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>实验组 AI 大模型 API 中转站</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #18202f; --panel2: #1f2a3d; --line: #2b384f;
+    --text: #e6ecf5; --muted: #93a1b8; --accent: #4f8cff; --accent2: #2f6fe0;
+    --ok: #36c08a; --warn: #e0a93f; --err: #e0604f; --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; }
+  a { color: var(--accent); }
+  button { font-family: inherit; cursor: pointer; border: none; border-radius: 8px;
+    padding: 8px 14px; background: var(--accent); color: #fff; font-size: 14px; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  button.danger { background: var(--err); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, select, textarea { font-family: inherit; font-size: 14px; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 11px; width: 100%; }
+  label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px; margin-bottom: 16px; }
+  .muted { color: var(--muted); }
+  .pill { display:inline-block; padding: 2px 9px; border-radius: 99px; background: var(--panel2);
+    border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  code, pre { background: #0b1018; border: 1px solid var(--line); border-radius: 8px; }
+  pre { padding: 12px; overflow-x: auto; font-size: 12.5px; color: #cfe0ff; }
+  code { padding: 2px 6px; }
+  /* layout */
+  header { display:flex; align-items:center; justify-content:space-between;
+    padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top:0; z-index:5;}
+  header h1 { font-size: 16px; margin: 0; }
+  nav { display:flex; gap: 6px; flex-wrap: wrap; }
+  nav button { background: transparent; color: var(--muted); padding: 7px 12px; }
+  nav button.active { background: var(--panel2); color: var(--text); }
+  main { max-width: 980px; margin: 22px auto; padding: 0 18px 60px; }
+  .hidden { display: none !important; }
+  /* chat */
+  #chatlog { height: 46vh; overflow-y: auto; padding: 6px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width: 80%; padding: 10px 13px; border-radius: 12px; white-space: pre-wrap; line-height: 1.5; }
+  .msg.user { align-self: flex-end; background: var(--accent2); color:#fff; }
+  .msg.assistant { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); }
+  .msg .meta { display:block; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .grid3 { display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .stat { background: var(--panel2); border-radius: 10px; padding: 14px; }
+  .stat b { font-size: 22px; display:block; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); padding: 10px 18px; border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.4); z-index: 50; }
+  .login-wrap { max-width: 380px; margin: 8vh auto; }
+  .tabline { display:flex; gap: 16px; margin-bottom: 14px; }
+  .tabline a { cursor:pointer; color: var(--muted); }
+  .tabline a.active { color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+  .tokenbox { font-family: monospace; word-break: break-all; background:#0b1018; padding:10px; border-radius:8px; border:1px solid var(--line); }
+</style>
+</head>
+<body>
+
+<!-- ===================== 登录页 ===================== -->
+<div id="auth" class="login-wrap">
+  <div class="card">
+    <h1 style="margin-top:0">实验组 AI 大模型 API 中转站</h1>
+    <div class="tabline">
+      <a id="tab-login" class="active" onclick="switchAuth('login')">登录</a>
+      <a id="tab-reg" onclick="switchAuth('reg')">注册</a>
+    </div>
+    <div id="form-login">
+      <label>用户名</label><input id="li-user" autocomplete="username" />
+      <label>密码</label><input id="li-pass" type="password" autocomplete="current-password" />
+      <div style="margin-top:16px"><button onclick="doLogin()">登录</button></div>
+      <p class="muted" style="font-size:12px;margin-top:14px">默认管理员：admin / admin12345（首次启动自动创建）</p>
+    </div>
+    <div id="form-reg" class="hidden">
+      <label>用户名（≥3 位）</label><input id="rg-user" />
+      <label>邮箱（可选）</label><input id="rg-email" />
+      <label>密码（≥6 位）</label><input id="rg-pass" type="password" />
+      <div style="margin-top:16px"><button onclick="doRegister()">注册并登录</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 主应用 ===================== -->
+<div id="app" class="hidden">
+  <header>
+    <h1>🛰️ AI 大模型 API 中转站</h1>
+    <nav id="nav">
+      <button data-view="chat" class="active" onclick="show('chat')">网页聊天</button>
+      <button data-view="wallet" onclick="show('wallet')">额度/钱包</button>
+      <button data-view="tokens" onclick="show('tokens')">API Token</button>
+      <button data-view="usage" onclick="show('usage')">消费明细</button>
+      <button data-view="docs" onclick="show('docs')">API 文档</button>
+      <button data-view="admin" id="nav-admin" class="hidden" onclick="show('admin')">管理后台</button>
+    </nav>
+    <div class="row" style="align-items:center">
+      <span id="who" class="pill"></span>
+      <button class="ghost" onclick="logout()">退出</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 聊天 -->
+    <section id="view-chat">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="row" style="align-items:center">
+            <label style="margin:0">模型等级</label>
+            <select id="chat-level" style="width:auto"></select>
+          </div>
+          <span class="pill" id="chat-balance">余额 — 点</span>
+        </div>
+        <div id="chatlog" style="margin-top:12px"></div>
+        <div class="row" style="margin-top:10px">
+          <textarea id="chat-input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行" style="flex:1"></textarea>
+          <button id="chat-send" onclick="sendChat()">发送</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">使用规范：仅供学习与科研辅助；禁止上传涉密/敏感信息，禁止用于作弊或代写；重要内容请人工复核。</p>
+      </div>
+    </section>
+
+    <!-- 钱包 -->
+    <section id="view-wallet" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">点数账户</h3>
+        <div class="grid3">
+          <div class="stat"><span class="muted">总余额</span><b id="w-balance">—</b></div>
+          <div class="stat"><span class="muted">累计消耗</span><b id="w-used">—</b></div>
+          <div class="stat"><span class="muted">角色</span><b id="w-role">—</b></div>
+        </div>
+        <table style="margin-top:14px">
+          <tr><th>免费额度</th><th>学校补贴</th><th>课题组/项目</th><th>自愿购买</th></tr>
+          <tr><td id="w-free">—</td><td id="w-subsidy">—</td><td id="w-project">—</td><td id="w-paid">—</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">调用限额</h3>
+        <table>
+          <tr><th>每分钟请求</th><th>每日请求</th><th>每日 Token</th></tr>
+          <tr><td id="q-rpm">—</td><td id="q-drl">—</td><td id="q-dtl">—</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Tokens -->
+    <section id="view-tokens" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">平台内部 API Token</h3>
+          <button onclick="createToken()">+ 新建 Token</button>
+        </div>
+        <p class="muted" style="font-size:12px">用户拿到的是平台 Token，而非真实供应商 Key。Token 只在创建/重置时完整显示一次，请妥善保存，切勿上传到公开代码仓库。</p>
+        <div id="new-token" class="hidden" style="margin-bottom:14px">
+          <label>新 Token（仅显示一次）</label>
+          <div class="tokenbox" id="new-token-val"></div>
+        </div>
+        <table>
+          <thead><tr><th>名称</th><th>前缀</th><th>等级</th><th>状态</th><th>过期</th><th>操作</th></tr></thead>
+          <tbody id="token-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Usage -->
+    <section id="view-usage" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">消费明细 / 调用记录</h3>
+        <table>
+          <thead><tr><th>时间</th><th>来源</th><th>等级</th><th>任务</th><th>输入</th><th>输出</th><th>状态</th></tr></thead>
+          <tbody id="usage-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Docs -->
+    <section id="view-docs" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">科研程序化 API 调用</h3>
+        <p class="muted">在 Python / Java / Matlab / 实验系统中携带平台内部 API Token 调用。下面以通用聊天接口为例。</p>
+        <h4>cURL</h4>
+        <pre id="doc-curl"></pre>
+        <h4>Python</h4>
+        <pre id="doc-py"></pre>
+        <p class="muted" style="font-size:12px">交互式接口文档（Swagger）：<a href="/docs" target="_blank">/docs</a></p>
+      </div>
+    </section>
+
+    <!-- Admin -->
+    <section id="view-admin" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">系统概览</h3>
+        <div class="grid3">
+          <div class="stat"><span class="muted">用户数</span><b id="s-users">—</b></div>
+          <div class="stat"><span class="muted">调用次数</span><b id="s-calls">—</b></div>
+          <div class="stat"><span class="muted">计费记录</span><b id="s-bills">—</b></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">用户管理</h3>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="admin-users"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">Key 池管理</h3>
+          <button onclick="toggleKeyForm()">+ 添加 Key</button>
+        </div>
+        <div id="key-form" class="hidden" style="margin:10px 0">
+          <div class="row">
+            <div style="flex:1"><label>供应商 provider</label><input id="k-provider" placeholder="openai / mock" /></div>
+            <div style="flex:1"><label>资源池</label>
+              <select id="k-pool"><option value="school">学校主池</option><option value="group">课题组池</option><option value="contributed">学生贡献池</option></select>
+            </div>
+          </div>
+          <label>base_url（OpenAI 兼容）</label><input id="k-baseurl" placeholder="https://api.openai.com/v1" />
+          <label>真实 API Key（加密保存，列表不可见）</label><input id="k-apikey" />
+          <label>支持模型 supported_models（逗号分隔，可空=通配）</label><input id="k-models" placeholder="gpt-4o-mini,gpt-4o" />
+          <div style="margin-top:12px"><button onclick="createKey()">保存</button></div>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>资源池</th><th>供应商</th><th>账号</th><th>状态</th><th>今日Token</th><th>操作</th></tr></thead>
+          <tbody id="admin-keys"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">模型管理</h3>
+        <table>
+          <thead><tr><th>ID</th><th>等级</th><th>供应商</th><th>模型</th><th>倍率</th><th>启用</th></tr></thead>
+          <tbody id="admin-models"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">最近调用日志</h3>
+        <table>
+          <thead><tr><th>时间</th><th>用户</th><th>来源</th><th>模型</th><th>输入</th><th>输出</th><th>状态</th></tr></thead>
+          <tbody id="admin-logs"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const API = "";
+let TOKEN = localStorage.getItem("relay_jwt") || "";
+let ME = null;
+
+function toast(msg, ms=2600){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'), ms); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function api(path, opts={}){
+  opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  if (TOKEN) opts.headers['Authorization'] = 'Bearer ' + TOKEN;
+  const r = await fetch(API + path, opts);
+  let data = null; try { data = await r.json(); } catch(e){}
+  if (!r.ok){ throw new Error((data && data.detail) ? data.detail : ('请求失败 ' + r.status)); }
+  return data;
+}
+
+/* ---------- 认证 ---------- */
+function switchAuth(which){
+  document.getElementById('tab-login').classList.toggle('active', which==='login');
+  document.getElementById('tab-reg').classList.toggle('active', which==='reg');
+  document.getElementById('form-login').classList.toggle('hidden', which!=='login');
+  document.getElementById('form-reg').classList.toggle('hidden', which!=='reg');
+}
+async function doLogin(){
+  try{
+    const u = document.getElementById('li-user').value.trim();
+    const p = document.getElementById('li-pass').value;
+    const d = await api('/api/auth/login', {method:'POST', body: JSON.stringify({username:u, password:p})});
+    TOKEN = d.access_token; localStorage.setItem('relay_jwt', TOKEN);
+    await boot();
+  }catch(e){ toast(e.message); }
+}
+async function doRegister(){
+  try{
+    const u = document.getElementById('rg-user').value.trim();
+    const p = document.getElementById('rg-pass').value;
+    const email = document.getElementById('rg-email').value.trim();
+    await api('/api/auth/register', {method:'POST', body: JSON.stringify({username:u, password:p, email:email||null})});
+    const d = await api('/api/auth/login', {method:'POST', body: JSON.stringify({username:u, password:p})});
+    TOKEN = d.access_token; localStorage.setItem('relay_jwt', TOKEN);
+    await boot();
+  }catch(e){ toast(e.message); }
+}
+function logout(){ TOKEN=''; localStorage.removeItem('relay_jwt'); ME=null;
+  document.getElementById('app').classList.add('hidden'); document.getElementById('auth').classList.remove('hidden'); }
+
+/* ---------- 视图切换 ---------- */
+function show(view){
+  ['chat','wallet','tokens','usage','docs','admin'].forEach(v=>{
+    document.getElementById('view-'+v).classList.toggle('hidden', v!==view);
+  });
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
+  if (view==='wallet') loadWallet();
+  if (view==='tokens') loadTokens();
+  if (view==='usage') loadUsage();
+  if (view==='docs') renderDocs();
+  if (view==='admin') loadAdmin();
+}
+
+/* ---------- 启动 ---------- */
+async function boot(){
+  try{
+    ME = await api('/api/web/me');
+  }catch(e){ logout(); return; }
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('who').textContent = ME.username + ' · ' + ME.role;
+  document.getElementById('nav-admin').classList.toggle('hidden', ME.role!=='admin');
+  await loadModels();
+  await refreshBalancePill();
+  show('chat');
+}
+
+async function loadModels(){
+  const levels = await api('/api/web/models');
+  const sel = document.getElementById('chat-level'); sel.innerHTML='';
+  (levels||[]).forEach(l=>{ const o=document.createElement('option'); o.value=l.model_level; o.textContent=l.display_name+' ('+l.model_level+')'; sel.appendChild(o); });
+}
+async function refreshBalancePill(){
+  try{ const w = await api('/api/web/wallet'); document.getElementById('chat-balance').textContent = '余额 '+w.balance+' 点'; }catch(e){}
+}
+
+/* ---------- 聊天 ---------- */
+const history = [];
+function addMsg(role, content, meta){
+  const log = document.getElementById('chatlog');
+  const d = document.createElement('div'); d.className='msg '+role;
+  d.innerHTML = esc(content) + (meta?('<span class="meta">'+esc(meta)+'</span>'):'');
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+async function sendChat(){
+  const input = document.getElementById('chat-input'); const text = input.value.trim();
+  if(!text) return;
+  const level = document.getElementById('chat-level').value;
+  input.value=''; addMsg('user', text);
+  history.push({role:'user', content:text});
+  const btn = document.getElementById('chat-send'); btn.disabled=true; btn.textContent='…';
+  try{
+    const d = await api('/api/web/chat', {method:'POST', body: JSON.stringify({model_level:level, task_type:'web_chat', messages:history, max_tokens:512})});
+    addMsg('assistant', d.content, d.model+' · 扣 '+d.usage.points_used+' 点 · 余额 '+d.balance_after);
+    history.push({role:'assistant', content:d.content});
+    document.getElementById('chat-balance').textContent = '余额 '+d.balance_after+' 点';
+  }catch(e){ addMsg('assistant', '⚠️ '+e.message); }
+  finally{ btn.disabled=false; btn.textContent='发送'; }
+}
+document.addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey && document.activeElement && document.activeElement.id==='chat-input'){
+    e.preventDefault(); sendChat();
+  }
+});
+
+/* ---------- 钱包 ---------- */
+async function loadWallet(){
+  const w = await api('/api/web/wallet'); const q = await api('/api/web/quota');
+  document.getElementById('w-balance').textContent = w.balance;
+  document.getElementById('w-used').textContent = w.total_used_points;
+  document.getElementById('w-role').textContent = q.role;
+  document.getElementById('w-free').textContent = w.free_points;
+  document.getElementById('w-subsidy').textContent = w.subsidy_points;
+  document.getElementById('w-project').textContent = w.project_points;
+  document.getElementById('w-paid').textContent = w.paid_points;
+  document.getElementById('q-rpm').textContent = q.rate_limit_per_minute;
+  document.getElementById('q-drl').textContent = q.daily_request_limit;
+  document.getElementById('q-dtl').textContent = q.daily_token_limit;
+}
+
+/* ---------- Tokens ---------- */
+async function loadTokens(){
+  const rows = await api('/api/web/tokens'); const tb = document.getElementById('token-rows'); tb.innerHTML='';
+  rows.forEach(t=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${esc(t.token_name)}</td><td><code>${esc(t.token_prefix||'')}</code></td>
+      <td>${esc(t.model_scope)}</td><td>${esc(t.status)}</td><td>${esc((t.expires_at||'').slice(0,10))}</td>
+      <td class="row">
+        <button class="ghost" onclick="resetToken(${t.id})">重置</button>
+        <button class="danger" onclick="disableToken(${t.id})">停用</button>
+      </td>`;
+    tb.appendChild(tr);
+  });
+}
+async function createToken(){
+  try{ const d = await api('/api/web/tokens', {method:'POST', body: JSON.stringify({token_name:'default', model_scope:'basic'})});
+    showNewToken(d.plaintext_token); loadTokens(); }catch(e){ toast(e.message); }
+}
+async function resetToken(id){
+  try{ const d = await api('/api/web/tokens/'+id+'/reset', {method:'POST'}); showNewToken(d.plaintext_token); loadTokens(); }catch(e){ toast(e.message); }
+}
+async function disableToken(id){
+  try{ await api('/api/web/tokens/'+id+'/disable', {method:'POST'}); loadTokens(); }catch(e){ toast(e.message); }
+}
+function showNewToken(t){
+  document.getElementById('new-token').classList.remove('hidden');
+  document.getElementById('new-token-val').textContent = t;
+}
+
+/* ---------- Usage ---------- */
+async function loadUsage(){
+  const rows = await api('/api/web/usage?limit=100'); const tb = document.getElementById('usage-rows'); tb.innerHTML='';
+  rows.forEach(u=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${esc((u.created_at||'').replace('T',' ').slice(0,19))}</td><td>${esc(u.source)}</td>
+      <td>${esc(u.model_level)}</td><td>${esc(u.task_type)}</td><td>${u.input_tokens}</td><td>${u.output_tokens}</td>
+      <td>${u.status==='success'?'✅':'⚠️ '+esc(u.status)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+/* ---------- Docs ---------- */
+function renderDocs(){
+  const base = location.origin;
+  document.getElementById('doc-curl').textContent =
+`curl -X POST ${base}/api/v1/llm/chat \\
+  -H "Authorization: Bearer <你的平台API Token>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model_level": "basic",
+    "task_type": "research_chat",
+    "messages": [{"role":"user","content":"请解释这段实验结果。"}]
+  }'`;
+  document.getElementById('doc-py').textContent =
+`import httpx
+r = httpx.post("${base}/api/v1/llm/chat",
+    headers={"Authorization": "Bearer <你的平台API Token>"},
+    json={"model_level":"basic","task_type":"research_chat",
+          "messages":[{"role":"user","content":"批量论文摘要示例"}]})
+print(r.json()["content"])`;
+}
+
+/* ---------- Admin ---------- */
+async function loadAdmin(){
+  try{
+    const s = await api('/api/v1/admin/stats');
+    document.getElementById('s-users').textContent = s.total_users;
+    document.getElementById('s-calls').textContent = s.total_calls;
+    document.getElementById('s-bills').textContent = s.total_billing_records;
+    const users = await api('/api/v1/admin/users'); const ub=document.getElementById('admin-users'); ub.innerHTML='';
+    users.forEach(u=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${u.id}</td><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td>${esc(u.status)}</td>
+        <td class="row">
+          <button class="ghost" onclick="grant(${u.id})">+补贴</button>
+          <button class="ghost" onclick="toggleUser(${u.id}, '${u.status}')">${u.status==='active'?'禁用':'启用'}</button>
+        </td>`; ub.appendChild(tr); });
+    const keys = await api('/api/v1/admin/keys'); const kb=document.getElementById('admin-keys'); kb.innerHTML='';
+    keys.forEach(k=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${k.id}</td><td>${esc(k.resource_pool_type)}</td><td>${esc(k.provider)}</td><td>${esc(k.account_name||'')}</td>
+        <td>${esc(k.status)}</td><td>${k.used_tokens_today||0}</td>
+        <td class="row"><button class="danger" onclick="delKey(${k.id})">删除</button></td>`; kb.appendChild(tr); });
+    const models = await api('/api/v1/admin/models'); const mb=document.getElementById('admin-models'); mb.innerHTML='';
+    models.forEach(m=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${m.id}</td><td>${esc(m.model_level)}</td><td>${esc(m.provider)}</td><td>${esc(m.model_name)}</td><td>${m.multiplier}x</td><td>${m.enabled?'✅':'—'}</td>`; mb.appendChild(tr); });
+    const logs = await api('/api/v1/admin/logs?limit=50'); const lb=document.getElementById('admin-logs'); lb.innerHTML='';
+    logs.forEach(l=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${esc((l.created_at||'').replace('T',' ').slice(0,19))}</td><td>${l.id}</td><td>${esc(l.source)}</td>
+        <td>${esc(l.model_name)}</td><td>${l.input_tokens}</td><td>${l.output_tokens}</td><td>${l.status==='success'?'✅':'⚠️'}</td>`; lb.appendChild(tr); });
+  }catch(e){ toast(e.message); }
+}
+async function grant(id){
+  try{ await api('/api/v1/admin/users/'+id+'/grant', {method:'POST', body: JSON.stringify({bucket:'subsidy', points:1000})}); toast('已发放 1000 补贴点'); }catch(e){ toast(e.message); }
+}
+async function toggleUser(id, st){
+  try{ await api('/api/v1/admin/users/'+id, {method:'PATCH', body: JSON.stringify({status: st==='active'?'disabled':'active'})}); loadAdmin(); }catch(e){ toast(e.message); }
+}
+function toggleKeyForm(){ document.getElementById('key-form').classList.toggle('hidden'); }
+async function createKey(){
+  try{
+    await api('/api/v1/admin/keys', {method:'POST', body: JSON.stringify({
+      resource_pool_type: document.getElementById('k-pool').value,
+      provider: document.getElementById('k-provider').value.trim(),
+      base_url: document.getElementById('k-baseurl').value.trim() || null,
+      api_key: document.getElementById('k-apikey').value.trim(),
+      supported_models: document.getElementById('k-models').value.trim() || null
+    })});
+    toast('Key 已加密保存'); toggleKeyForm(); loadAdmin();
+  }catch(e){ toast(e.message); }
+}
+async function delKey(id){
+  try{ await api('/api/v1/admin/keys/'+id, {method:'DELETE'}); loadAdmin(); }catch(e){ toast(e.message); }
+}
+
+/* ---------- 初始化 ---------- */
+if (TOKEN) boot();
+</script>
+</body>
+</html>

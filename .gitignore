@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 环境与密钥
+.env
+*.local
+
+# 数据库 / 数据
+*.db
+*.sqlite
+*.sqlite3
+relay.db
+
+# 日志
+*.log
+logs/
+
+# 临时
+_docx_unpacked/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/

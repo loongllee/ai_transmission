@@ -1,0 +1,56 @@
+"""平台配置（从环境变量 / .env 读取）。"""
+from typing import List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        protected_namespaces=(),
+    )
+
+    app_name: str = "实验组 AI 大模型 API 中转站"
+    environment: str = "dev"
+
+    # 数据库
+    database_url: str = "sqlite:///./relay.db"
+
+    # 安全
+    jwt_secret: str = "dev-insecure-jwt-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 720
+    encryption_secret: str = "dev-insecure-encryption-secret-change-me"
+    api_token_prefix: str = "sk-relay-"
+
+    # 初始管理员
+    admin_username: str = "admin"
+    admin_password: str = "admin12345"
+    admin_email: str = "admin@example.com"
+
+    # 计费
+    base_points_per_1k_tokens: float = 1.0
+    signup_free_points: int = 500
+
+    # 网页会话默认限额（无 Token 时使用）
+    default_daily_request_limit: int = 200
+    default_rate_limit_per_minute: int = 10
+    default_daily_token_limit: int = 200000
+
+    # CORS
+    cors_origins: str = "*"
+
+    @property
+    def cors_origin_list(self) -> List[str]:
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def is_dev(self) -> bool:
+        return self.environment.lower() in ("dev", "development", "local")
+
+
+settings = Settings()
