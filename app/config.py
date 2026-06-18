@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     alert_error_threshold: int = 5      # 窗口内错误数达到阈值则告警
     alert_auto_disable_token: bool = True  # 触发告警时自动停用 Token
 
+    # ---- 第三阶段：付费与补偿试点 ----
+    allow_contributed_pool: bool = True            # 是否允许学生贡献备用池参与调度
+    contribution_default_daily_cost_limit: float = 5.0    # 贡献账号默认每日消耗上限(元)
+    contribution_default_monthly_cost_limit: float = 50.0  # 贡献账号默认每月消耗上限(元)
+    pilot_subsidy_per_contributor: float = 5.0     # 参与试点补贴(元/人，方案 9.3)
+    consent_version: str = "v1.0"                  # 当前电子授权版本号
+
     # CORS
     cors_origins: str = "*"
 

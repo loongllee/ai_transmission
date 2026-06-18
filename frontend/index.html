@@ -97,6 +97,8 @@
       <button data-view="tokens" onclick="show('tokens')">API Token</button>
       <button data-view="usage" onclick="show('usage')">消费明细</button>
       <button data-view="jobs" onclick="show('jobs')">批量任务</button>
+      <button data-view="store" onclick="show('store')">充值套餐</button>
+      <button data-view="contrib" onclick="show('contrib')">贡献账号</button>
       <button data-view="docs" onclick="show('docs')">API 文档</button>
       <button data-view="admin" id="nav-admin" class="hidden" onclick="show('admin')">管理后台</button>
     </nav>
@@ -224,6 +226,49 @@
       </div>
     </section>
 
+    <!-- Store / 充值套餐 -->
+    <section id="view-store" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">充值套餐（自愿购买）</h3>
+        <p class="muted" style="font-size:12px">不购买也有基础免费额度；购买完全自愿，不与成绩/考核/评奖/毕业挂钩。价格公开透明，消费明细可查。</p>
+        <table>
+          <thead><tr><th>套餐</th><th>价格</th><th>点数</th><th>适用对象</th><th>操作</th></tr></thead>
+          <tbody id="pkg-rows"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">我的订单</h3>
+        <table>
+          <thead><tr><th>订单号</th><th>套餐</th><th>金额</th><th>点数</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="order-rows"></tbody>
+        </table>
+        <p class="muted" style="font-size:12px">演示环境用「模拟支付」；正式环境支付走学校正规财务渠道。</p>
+      </div>
+    </section>
+
+    <!-- Contributions / 贡献账号 -->
+    <section id="view-contrib" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">自愿贡献备用账号</h3>
+        <p class="muted" style="font-size:12px">自愿参与、知情同意、可随时撤回、学校按实际消耗给予补偿。贡献账号仅作低风险备用资源，受额度与用途限制。</p>
+        <label>供应商 provider</label><input id="ct-provider" value="mock" />
+        <label>真实 API Key（加密保存，平台与前端均不可见明文）</label><input id="ct-key" placeholder="sk-..." />
+        <label>允许模型等级</label>
+        <select id="ct-levels"><option value="basic">仅基础模型（推荐）</option><option value="basic,standard">基础+标准</option></select>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <label style="margin:0"><input type="checkbox" id="ct-consent" style="width:auto" /> 我已知情并自愿同意上述条款</label>
+        </div>
+        <div style="margin-top:12px"><button onclick="submitContribution()">提交贡献</button></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">我的贡献账号</h3>
+        <table>
+          <thead><tr><th>ID</th><th>供应商</th><th>等级</th><th>今日消耗</th><th>本月消耗</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="contrib-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Docs -->
     <section id="view-docs" class="hidden">
       <div class="card">
@@ -292,6 +337,22 @@
           <tbody id="admin-logs"></tbody>
         </table>
       </div>
+      <div class="card">
+        <h3 style="margin-top:0">付费意愿统计（匿名汇总）</h3>
+        <div class="grid3">
+          <div class="stat"><span class="muted">付费人数</span><b id="pay-purchasers">—</b></div>
+          <div class="stat"><span class="muted">转化率</span><b id="pay-conv">—</b></div>
+          <div class="stat"><span class="muted">总营收(元)</span><b id="pay-rev">—</b></div>
+        </div>
+        <p class="muted" style="font-size:12px;margin-bottom:0" id="pay-extra"></p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">学生贡献账号补偿统计</h3>
+        <table>
+          <thead><tr><th>贡献者</th><th>账号数</th><th>实际消耗(元)</th><th>试点补贴(元)</th><th>建议补偿(元)</th></tr></thead>
+          <tbody id="comp-rows"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 </div>
@@ -347,7 +408,7 @@ function logout(){ TOKEN=''; localStorage.removeItem('relay_jwt'); ME=null;
 
 /* ---------- 视图切换 ---------- */
 function show(view){
-  ['chat','wallet','tokens','usage','jobs','docs','admin'].forEach(v=>{
+  ['chat','wallet','tokens','usage','jobs','store','contrib','docs','admin'].forEach(v=>{
     document.getElementById('view-'+v).classList.toggle('hidden', v!==view);
   });
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
@@ -355,6 +416,8 @@ function show(view){
   if (view==='tokens') loadTokens();
   if (view==='usage') loadUsage();
   if (view==='jobs') initJobs();
+  if (view==='store') loadStore();
+  if (view==='contrib') loadContrib();
   if (view==='docs') renderDocs();
   if (view==='admin') loadAdmin();
 }
@@ -525,6 +588,70 @@ async function viewJob(id){
   }catch(e){ toast(e.message); }
 }
 
+/* ---------- 充值套餐 ---------- */
+async function loadStore(){
+  try{
+    const pkgs = await api('/api/web/packages'); const pb=document.getElementById('pkg-rows'); pb.innerHTML='';
+    pkgs.forEach(p=>{
+      const tr=document.createElement('tr');
+      const action = p.application_only ? '<span class="muted">申请制</span>'
+        : (p.price>0 ? `<button onclick="buyPackage('${p.code}')">购买</button>` : '<span class="muted">免费发放</span>');
+      tr.innerHTML = `<td>${esc(p.name)}</td><td>¥${p.price}</td><td>${p.points}</td><td>${esc(p.audience||'')}</td><td>${action}</td>`;
+      pb.appendChild(tr);
+    });
+    await loadOrders();
+  }catch(e){ toast(e.message); }
+}
+async function loadOrders(){
+  const orders = await api('/api/web/orders'); const ob=document.getElementById('order-rows'); ob.innerHTML='';
+  orders.forEach(o=>{
+    const tr=document.createElement('tr');
+    const pay = o.status==='pending' ? `<button class="ghost" onclick="payOrder(${o.id})">模拟支付</button>` : '—';
+    tr.innerHTML = `<td><code>${esc(o.order_no)}</code></td><td>${esc(o.package_code)}</td><td>¥${o.amount}</td><td>${o.points}</td>
+      <td>${orderBadge(o.status)}</td><td>${pay}</td>`;
+    ob.appendChild(tr);
+  });
+}
+function orderBadge(s){ return ({pending:'⏳ 待支付',paid:'✅ 已支付',refunded:'↩️ 已退款',canceled:'🚫 取消'})[s]||esc(s); }
+async function buyPackage(code){
+  try{ await api('/api/web/orders', {method:'POST', body: JSON.stringify({package_code:code})}); toast('订单已创建，请在下方支付'); loadStore(); }
+  catch(e){ toast(e.message); }
+}
+async function payOrder(id){
+  try{ await api('/api/web/orders/'+id+'/pay', {method:'POST', body: JSON.stringify({pay_channel:'mock'})}); toast('支付成功，点数已到账'); loadStore(); refreshBalancePill(); }
+  catch(e){ toast(e.message); }
+}
+
+/* ---------- 贡献账号 ---------- */
+async function loadContrib(){
+  try{
+    const rows = await api('/api/web/contributions'); const tb=document.getElementById('contrib-rows'); tb.innerHTML='';
+    rows.forEach(c=>{
+      const tr=document.createElement('tr');
+      const op = c.status==='active' ? `<button class="danger" onclick="revokeContribution(${c.id})">撤回</button>` : '—';
+      tr.innerHTML = `<td>${c.id}</td><td>${esc(c.provider)}</td><td>${esc(c.allowed_model_levels||'')}</td>
+        <td>¥${c.used_cost_today||0}</td><td>¥${c.used_cost_month||0}</td><td>${esc(c.status)}</td><td>${op}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast(e.message); }
+}
+async function submitContribution(){
+  if (!document.getElementById('ct-consent').checked){ toast('请先勾选知情同意'); return; }
+  const body = {
+    provider: document.getElementById('ct-provider').value.trim()||'mock',
+    api_key: document.getElementById('ct-key').value.trim(),
+    allowed_model_levels: document.getElementById('ct-levels').value,
+    consent: true
+  };
+  if (!body.api_key){ toast('请填写 API Key'); return; }
+  try{ await api('/api/web/contributions', {method:'POST', body: JSON.stringify(body)}); toast('已提交贡献'); document.getElementById('ct-key').value=''; document.getElementById('ct-consent').checked=false; loadContrib(); }
+  catch(e){ toast(e.message); }
+}
+async function revokeContribution(id){
+  try{ await api('/api/web/contributions/'+id+'/revoke', {method:'POST'}); toast('已撤回'); loadContrib(); }
+  catch(e){ toast(e.message); }
+}
+
 /* ---------- Docs ---------- */
 function renderDocs(){
   const base = location.origin;
@@ -572,6 +699,15 @@ async function loadAdmin(){
     logs.forEach(l=>{ const tr=document.createElement('tr');
       tr.innerHTML = `<td>${esc((l.created_at||'').replace('T',' ').slice(0,19))}</td><td>${l.id}</td><td>${esc(l.source)}</td>
         <td>${esc(l.model_name)}</td><td>${l.input_tokens}</td><td>${l.output_tokens}</td><td>${l.status==='success'?'✅':'⚠️'}</td>`; lb.appendChild(tr); });
+    const pay = await api('/api/v1/admin/stats/payment');
+    document.getElementById('pay-purchasers').textContent = pay.purchasers;
+    document.getElementById('pay-conv').textContent = (pay.conversion_rate*100).toFixed(1)+'%';
+    document.getElementById('pay-rev').textContent = pay.total_revenue;
+    document.getElementById('pay-extra').textContent =
+      `免费额度用尽 ${pay.free_exhausted_users} 人 · 复购 ${pay.repurchasers} 人 · 人均 ¥${pay.avg_purchase_amount} · 套餐分布 ${JSON.stringify(pay.package_distribution)}`;
+    const comp = await api('/api/v1/admin/compensation'); const cb=document.getElementById('comp-rows'); cb.innerHTML='';
+    comp.forEach(c=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${esc(c.username||c.contributor_user_id)}</td><td>${c.accounts}</td><td>${c.total_cost}</td><td>${c.pilot_subsidy}</td><td><b>${c.suggested_compensation}</b></td>`; cb.appendChild(tr); });
   }catch(e){ toast(e.message); }
 }
 async function grant(id){

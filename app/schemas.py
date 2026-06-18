@@ -315,3 +315,93 @@ class AlertOut(BaseModel):
     status: str
     auto_action: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+# ---------- 第三阶段：套餐 / 充值订单 ----------
+class PackageOut(BaseModel):
+    model_config = _CFG
+    id: int
+    code: str
+    name: str
+    price: float
+    points: int
+    audience: Optional[str] = None
+    application_only: bool = False
+    enabled: bool = True
+
+
+class PackageIn(BaseModel):
+    code: str
+    name: str
+    price: float = 0
+    points: int = 0
+    audience: Optional[str] = None
+    application_only: bool = False
+    enabled: bool = True
+    sort: int = 0
+
+
+class CreateOrderRequest(BaseModel):
+    package_code: str
+
+
+class PayOrderRequest(BaseModel):
+    pay_channel: str = "mock"
+    external_ref: Optional[str] = None
+
+
+class OrderOut(BaseModel):
+    model_config = _CFG
+    id: int
+    order_no: str
+    user_id: Optional[int] = None
+    package_code: Optional[str] = None
+    amount: float
+    points: int
+    status: str
+    pay_channel: Optional[str] = None
+    external_ref: Optional[str] = None
+    created_at: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+
+
+# ---------- 第三阶段：学生自愿贡献账号 ----------
+class ContributionIn(BaseModel):
+    model_config = _CFG
+    provider: str = "mock"
+    api_key: str  # 明文，仅提交时提供，后端加密保存
+    allowed_model_levels: Optional[str] = "basic"
+    daily_cost_limit: Optional[float] = None
+    monthly_cost_limit: Optional[float] = None
+    allowed_task_types: Optional[str] = None
+    allow_sensitive_data: bool = False
+    consent: bool = False  # 知情同意，必须为 true
+
+
+class ContributionOut(BaseModel):
+    """不返回任何明文/密文 Key。"""
+
+    model_config = _CFG
+    id: int
+    provider: str
+    allowed_model_levels: Optional[str] = None
+    daily_cost_limit: Optional[float] = None
+    monthly_cost_limit: Optional[float] = None
+    used_cost_today: Optional[float] = None
+    used_cost_month: Optional[float] = None
+    allow_sensitive_data: Optional[bool] = None
+    status: str
+    consent_version: Optional[str] = None
+    consent_time: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class CompensationOut(BaseModel):
+    contributor_user_id: int
+    username: Optional[str] = None
+    accounts: int
+    total_cost: float
+    pilot_subsidy: float
+    suggested_compensation: float

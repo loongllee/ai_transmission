@@ -8,18 +8,36 @@ from sqlalchemy.orm import Session
 
 from .. import billing, chat
 from .. import jobs as jobs_service
+from .. import store
 from ..database import get_db
 from ..deps import Principal, get_current_user, web_principal
-from ..models import Job, JobItem, Model, User, UserApiToken, UsageLog, WalletAccount
+from ..models import (
+    ContributedApiKey,
+    Job,
+    JobItem,
+    Model,
+    Order,
+    Package,
+    User,
+    UserApiToken,
+    UsageLog,
+    WalletAccount,
+)
 from ..schemas import (
     ApiTokenCreatedOut,
     ApiTokenOut,
     ChatRequest,
     ChatResponse,
+    ContributionIn,
+    ContributionOut,
+    CreateOrderRequest,
     CreateTokenRequest,
     JobCreateRequest,
     JobOut,
     JobResultOut,
+    OrderOut,
+    PackageOut,
+    PayOrderRequest,
     QuotaOut,
     UsageLogOut,
     UserOut,
@@ -221,3 +239,62 @@ def web_job_results(job_id: int, user: User = Depends(get_current_user), db: Ses
         raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
     items = db.query(JobItem).filter(JobItem.job_id == job.id).order_by(JobItem.seq.asc()).all()
     return {"job": job, "items": items}
+
+
+# ---------- 套餐 / 充值订单（第三阶段，方案第十一节）----------
+@router.get("/packages", response_model=List[PackageOut])
+def list_packages(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    return (
+        db.query(Package)
+        .filter(Package.enabled.is_(True))
+        .order_by(Package.sort.asc(), Package.id.asc())
+        .all()
+    )
+
+
+@router.get("/orders", response_model=List[OrderOut])
+def list_orders(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.desc()).all()
+
+
+@router.post("/orders", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
+def create_order(payload: CreateOrderRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return store.create_order(db, user, payload.package_code)
+
+
+@router.post("/orders/{order_id}/pay", response_model=OrderOut)
+def pay_order(
+    order_id: int,
+    payload: PayOrderRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """模拟支付（试点演示）。真实支付应由学校财务渠道回调触发。"""
+    order = db.get(Order, order_id)
+    if not order or order.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "订单不存在")
+    return store.pay_order(db, order, payload.pay_channel, payload.external_ref)
+
+
+# ---------- 学生自愿贡献账号（第三阶段，方案第九节）----------
+@router.get("/contributions", response_model=List[ContributionOut])
+def list_contributions(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return (
+        db.query(ContributedApiKey)
+        .filter(ContributedApiKey.contributor_user_id == user.id)
+        .order_by(ContributedApiKey.id.desc())
+        .all()
+    )
+
+
+@router.post("/contributions", response_model=ContributionOut, status_code=status.HTTP_201_CREATED)
+def create_contribution(payload: ContributionIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return store.create_contribution(db, user, payload)
+
+
+@router.post("/contributions/{cid}/revoke", response_model=ContributionOut)
+def revoke_contribution(cid: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    c = db.get(ContributedApiKey, cid)
+    if not c or c.contributor_user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "贡献记录不存在")
+    return store.revoke_contribution(db, c)

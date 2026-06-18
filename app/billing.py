@@ -1,12 +1,14 @@
 """模型路由、Key 池调度与点数计费（方案第十、十二节）。"""
 import math
+from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import ApiKeyPool, Model, ResearchGroup, WalletAccount
+from .models import ApiKeyPool, ContributedApiKey, Model, ResearchGroup, WalletAccount
 
 # 模型等级排序，用于 model_scope 权限判断
 LEVEL_ORDER = {"basic": 1, "standard": 2, "advanced": 3}
@@ -164,3 +166,82 @@ def charge(db: Session, user, points: int, source: str) -> dict:
         "from_group": from_group,
         "balance_after": available_balance(db, user, source),
     }
+
+
+# --------------------------------------------------------------------------
+# 统一 Key 句柄：兼容学校/课题组 Key 池与学生贡献备用账号（方案 8.3 / 9.5）
+# --------------------------------------------------------------------------
+@dataclass
+class KeyHandle:
+    kind: str  # "pool" | "contributed"
+    id: int
+    provider: str
+    base_url: Optional[str]
+    encrypted_api_key: str
+    obj: object  # 原始 ORM 对象，便于记账时更新用量
+
+
+def _contributed_candidates(db: Session, model: Model) -> List[ContributedApiKey]:
+    now = datetime.utcnow()
+    rows = (
+        db.query(ContributedApiKey)
+        .filter(
+            ContributedApiKey.provider == model.provider,
+            ContributedApiKey.status == "active",
+            ContributedApiKey.revoked_at.is_(None),
+        )
+        .order_by(ContributedApiKey.id.asc())
+        .all()
+    )
+
+    def usable(c: ContributedApiKey) -> bool:
+        if c.expires_at and c.expires_at < now:
+            return False
+        # 允许的模型等级（为空时默认仅 basic）
+        levels = [s.strip() for s in (c.allowed_model_levels or "basic").split(",") if s.strip()]
+        if model.model_level not in levels:
+            return False
+        # 每日/每月消耗上限（方案 9.4 额度受限）
+        if c.daily_cost_limit is not None and float(c.used_cost_today or 0) >= float(c.daily_cost_limit):
+            return False
+        if c.monthly_cost_limit is not None and float(c.used_cost_month or 0) >= float(c.monthly_cost_limit):
+            return False
+        return True
+
+    return [c for c in rows if usable(c)]
+
+
+def resolve_key(
+    db: Session,
+    model: Model,
+    *,
+    allow_contributed: bool = False,
+    sensitive: bool = False,
+) -> Optional[KeyHandle]:
+    """按 学校/课题组 → 学生贡献备用 的优先级解析一个可用 Key（方案 9.5）。
+
+    贡献备用池只在主资源池无可用 Key、且任务为低风险（非敏感）时降级启用。
+    """
+    pool_key = select_key(db, model)
+    if pool_key:
+        return KeyHandle(
+            kind="pool",
+            id=pool_key.id,
+            provider=pool_key.provider,
+            base_url=pool_key.base_url,
+            encrypted_api_key=pool_key.encrypted_api_key,
+            obj=pool_key,
+        )
+    if allow_contributed and settings.allow_contributed_pool and not sensitive:
+        cands = _contributed_candidates(db, model)
+        if cands:
+            c = cands[0]
+            return KeyHandle(
+                kind="contributed",
+                id=c.id,
+                provider=c.provider,
+                base_url=None,
+                encrypted_api_key=c.encrypted_api_key,
+                obj=c,
+            )
+    return None

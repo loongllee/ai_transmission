@@ -281,3 +281,44 @@ class Alert(Base):
     auto_action = Column(String(50), default="none")  # token_disabled / none
     created_at = Column(DateTime, default=_now, index=True)
     resolved_at = Column(DateTime)
+
+
+# ============================ 第三阶段：付费与补偿试点 ============================
+
+
+class Package(Base):
+    """点数套餐（方案 11.2）。学生自愿购买，不与成绩/考核挂钩。"""
+
+    __tablename__ = "packages"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    code = Column(String(50), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
+    price = Column(Numeric(10, 2), nullable=False, default=0)  # 价格(元)
+    points = Column(BigInteger, nullable=False, default=0)
+    audience = Column(String(200))  # 适用对象
+    application_only = Column(Boolean, default=False)  # 申请制（如高级包）
+    enabled = Column(Boolean, default=True)
+    sort = Column(Integer, default=0)
+    created_at = Column(DateTime, default=_now)
+
+
+class Order(Base):
+    """充值订单（方案 11.1：价格公开、明细可查、走学校正规财务渠道）。"""
+
+    __tablename__ = "orders"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    order_no = Column(String(64), nullable=False, unique=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    package_id = Column(BigInteger)
+    package_code = Column(String(50))
+    amount = Column(Numeric(10, 2), nullable=False, default=0)  # 应付金额(元)
+    points = Column(BigInteger, nullable=False, default=0)
+    # pending / paid / canceled / refunded
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    pay_channel = Column(String(50))  # school_finance / mock / ...
+    external_ref = Column(String(120))  # 学校财务流水号
+    created_at = Column(DateTime, default=_now, index=True)
+    paid_at = Column(DateTime)
+    refunded_at = Column(DateTime)

@@ -1,7 +1,7 @@
-"""初始化数据库：建表 + 初始管理员 + 默认 mock 模型与 Key（开箱即用）。"""
+"""初始化数据库：建表 + 初始管理员 + 默认 mock 模型/Key + 默认套餐（开箱即用）。"""
 from .config import settings
 from .database import Base, SessionLocal, engine
-from .models import ApiKeyPool, Model, User, WalletAccount
+from .models import ApiKeyPool, Model, Package, User, WalletAccount
 from .security import encrypt_secret, hash_password
 
 
@@ -11,6 +11,7 @@ def init_db() -> None:
     try:
         _seed_admin(db)
         _seed_mock_models_and_key(db)
+        _seed_packages(db)
         db.commit()
     finally:
         db.close()
@@ -90,6 +91,28 @@ def _seed_mock_models_and_key(db) -> None:
                 priority=0,
             )
         )
+
+
+def _seed_packages(db) -> None:
+    """默认套餐（方案 11.2）。价格公开透明，学生自愿购买。"""
+    if db.query(Package).count() > 0:
+        return
+    db.add_all(
+        [
+            Package(code="light", name="轻量包", price=5, points=500, audience="偶尔使用", sort=1),
+            Package(code="standard", name="标准包", price=15, points=1800, audience="日常学习科研", sort=2),
+            Package(code="research", name="科研包", price=30, points=4000, audience="论文、代码、批量任务", sort=3),
+            Package(
+                code="premium",
+                name="高级包",
+                price=0,
+                points=0,
+                audience="高级模型需求",
+                application_only=True,
+                sort=4,
+            ),
+        ]
+    )
 
 
 if __name__ == "__main__":

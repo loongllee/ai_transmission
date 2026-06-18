@@ -41,12 +41,16 @@ async def execute_chat(
     temperature: float = 0.7,
 ) -> dict:
     """核心调用：路由 → 余额 → 供应商 → 扣费 → 记账 → 审计。不做限流（由调用方决定）。"""
-    # 1) 选模型 + 选 Key
+    # 1) 选模型 + 解析 Key（学校/课题组 → 学生贡献备用）
     model = billing.select_model(db, model_level)
     if not model:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"暂无可用的 {model_level} 模型")
-    key = billing.select_key(db, model)
-    if not key:
+    # 贡献备用池仅用于低风险 basic、非敏感任务（方案 9.2）
+    sensitive = "sensitive" in (task_type or "").lower()
+    handle = billing.resolve_key(
+        db, model, allow_contributed=(model_level == "basic"), sensitive=sensitive
+    )
+    if not handle:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "暂无可用的供应商 Key（资源池为空或额度用尽）")
 
     # 2) 余额预检查（API 来源含课题组共享额度）
@@ -61,12 +65,12 @@ async def execute_chat(
 
     # 3) 调用真实/模拟供应商
     api_key_plain = ""
-    if key.encrypted_api_key:
+    if handle.encrypted_api_key:
         try:
-            api_key_plain = decrypt_secret(key.encrypted_api_key)
+            api_key_plain = decrypt_secret(handle.encrypted_api_key)
         except Exception:
             api_key_plain = ""
-    provider = get_provider(model.provider, key.base_url, api_key_plain)
+    provider = get_provider(model.provider, handle.base_url, api_key_plain)
 
     started = time.time()
     request_id = uuid.uuid4().hex
@@ -74,11 +78,11 @@ async def execute_chat(
         result = await provider.chat(model.model_name, messages, max_tokens or 512, temperature or 0.7)
     except httpx.HTTPStatusError as exc:
         code = str(exc.response.status_code)
-        _log_error(db, user, token, source, model, key, task_type, est_input, code, started)
+        _log_error(db, user, token, source, model, handle, task_type, est_input, code, started)
         alerts.on_call_error(db, token, user.id, code)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"供应商返回错误：{code}")
     except Exception as exc:  # noqa: BLE001
-        _log_error(db, user, token, source, model, key, task_type, est_input, "provider_error", started)
+        _log_error(db, user, token, source, model, handle, task_type, est_input, "provider_error", started)
         alerts.on_call_error(db, token, user.id, "provider_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"供应商调用失败：{exc}")
 
@@ -90,10 +94,15 @@ async def execute_chat(
     balance_after = charge["balance_after"]
     cost = billing.estimate_cost(model, result.input_tokens, result.output_tokens)
 
-    # 5) 更新 Key 用量
-    key.used_tokens_today = int(key.used_tokens_today or 0) + result.input_tokens + result.output_tokens
-    if key.monthly_budget is not None:
-        key.used_budget_month = float(key.used_budget_month or 0) + cost
+    # 5) 更新 Key 用量（贡献账号累计消耗，用于补偿统计；方案 9.3）
+    used_tokens = result.input_tokens + result.output_tokens
+    if handle.kind == "pool":
+        handle.obj.used_tokens_today = int(handle.obj.used_tokens_today or 0) + used_tokens
+        if handle.obj.monthly_budget is not None:
+            handle.obj.used_budget_month = float(handle.obj.used_budget_month or 0) + cost
+    else:  # contributed
+        handle.obj.used_cost_today = float(handle.obj.used_cost_today or 0) + cost
+        handle.obj.used_cost_month = float(handle.obj.used_cost_month or 0) + cost
 
     # 6) 记账 + 审计
     db.add(
@@ -119,7 +128,7 @@ async def execute_chat(
             provider=model.provider,
             model_level=model_level,
             model_name=model.model_name,
-            key_id=key.id,
+            key_id=handle.id,
             task_type=task_type,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
