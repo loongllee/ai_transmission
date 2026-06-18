@@ -1,0 +1,92 @@
+# ===== 生产化部署示例：app + PostgreSQL + Redis + 独立 Worker =====
+# 镜像需包含生产依赖：构建时用 requirements-prod.txt
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# 生产务必：修改下方密钥、用机密托管（*_FILE / Vault / KMS）注入、收敛 CORS、
+# 接入真实 OIDC、前置 Nginx/网关做 TLS 与统一入口（方案第十七节）。
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-prod.txt
+    image: ai-transmission:prod
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: "postgresql+psycopg://relay:relay@db:5432/relay"
+      REDIS_URL: "redis://redis:6379/0"
+      RUN_INPROCESS_WORKER: "false"      # 用独立 worker 服务处理队列
+      LOG_FORMAT: "json"                  # 便于 ELK/Loki 采集
+      METRICS_ENABLED: "true"
+      CORS_ORIGINS: "https://your-campus-portal.example.edu"
+      # 密钥：优先用 *_FILE 从机密文件读取（见 secrets 段），否则用环境变量
+      JWT_SECRET_FILE: "/run/secrets/jwt_secret"
+      ENCRYPTION_SECRET_FILE: "/run/secrets/encryption_secret"
+      # 真实学校 IdP（OIDC）
+      SSO_MODE: "oidc"
+      SSO_CLIENT_ID: "relay"
+      SSO_AUTHORIZE_URL: "https://idp.example.edu/oauth2/authorize"
+      SSO_TOKEN_URL: "https://idp.example.edu/oauth2/token"
+      SSO_USERINFO_URL: "https://idp.example.edu/oauth2/userinfo"
+    secrets:
+      - jwt_secret
+      - encryption_secret
+
+  worker:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-prod.txt
+    image: ai-transmission:prod
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "app.worker"]
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: "postgresql+psycopg://relay:relay@db:5432/relay"
+      ENCRYPTION_SECRET_FILE: "/run/secrets/encryption_secret"
+      LOG_FORMAT: "json"
+    secrets:
+      - encryption_secret
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay
+      POSTGRES_DB: relay
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  pg_data:
+  redis_data:
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  encryption_secret:
+    file: ./secrets/encryption_secret.txt

@@ -1,6 +1,8 @@
 """平台配置（从环境变量 / .env 读取）。"""
+import os
 from typing import List
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +70,32 @@ class Settings(BaseSettings):
     sso_token_url: str = ""
     sso_userinfo_url: str = ""
     sso_redirect_uri: str = "http://localhost:8000/sso/callback"
+
+    # ---- 生产化加固 ----
+    # Redis：设置后启用分布式限流（多实例一致），未设置则回退进程内限流
+    redis_url: str = ""
+    # 密钥可从挂载文件读取（Vault/KMS/K8s Secret 常用注入方式），优先级高于明文
+    jwt_secret_file: str = ""
+    encryption_secret_file: str = ""
+    # 可观测性
+    log_format: str = "text"           # text | json（json 便于 ELK/Loki 采集）
+    log_level: str = "INFO"
+    metrics_enabled: bool = True       # 暴露 /metrics（Prometheus 文本格式）
+    # OpenAI 兼容供应商调用
+    openai_timeout: float = 60.0
+    openai_max_retries: int = 2
+
+    @model_validator(mode="after")
+    def _load_secret_files(self):
+        """若配置了 *_FILE 且文件存在，则用文件内容覆盖对应密钥（机密托管注入）。"""
+        for file_attr, target in (("jwt_secret_file", "jwt_secret"), ("encryption_secret_file", "encryption_secret")):
+            path = getattr(self, file_attr, "")
+            if path and os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
+                if val:
+                    object.__setattr__(self, target, val)
+        return self
 
     # CORS
     cors_origins: str = "*"

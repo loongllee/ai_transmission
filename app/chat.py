@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import alerts, billing, governance, ratelimit
+from . import alerts, billing, governance, metrics, ratelimit
 from .deps import Principal
 from .models import BillingRecord, UsageLog, User, UserApiToken
 from .providers import estimate_messages_tokens, get_provider
@@ -86,10 +86,12 @@ async def execute_chat(
         code = str(exc.response.status_code)
         _log_error(db, user, token, source, model, handle, task_type, est_input, code, started)
         alerts.on_call_error(db, token, user.id, code)
+        metrics.inc("relay_errors_total", source=source)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"供应商返回错误：{code}")
     except Exception as exc:  # noqa: BLE001
         _log_error(db, user, token, source, model, handle, task_type, est_input, "provider_error", started)
         alerts.on_call_error(db, token, user.id, "provider_error")
+        metrics.inc("relay_errors_total", source=source)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"供应商调用失败：{exc}")
 
     latency_ms = int((time.time() - started) * 1000)
@@ -145,8 +147,11 @@ async def execute_chat(
     )
     db.commit()
 
-    # 7) 累加学校预算用量（达上限即熔断）
+    # 7) 累加学校预算用量（达上限即熔断）+ 指标
     governance.consume_budget(db, points)
+    metrics.inc("relay_requests_total", source=source, status="success")
+    metrics.inc("relay_tokens_total", value=float(result.input_tokens + result.output_tokens))
+    metrics.inc("relay_points_total", value=float(points))
 
     return {
         "request_id": request_id,

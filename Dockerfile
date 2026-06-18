@@ -10,9 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 先装依赖以利用层缓存
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# 选择依赖清单：默认 requirements.txt；生产可 --build-arg REQUIREMENTS=requirements-prod.txt
+ARG REQUIREMENTS=requirements.txt
+
+# 先装依赖以利用层缓存（requirements*.txt 全部拷入，便于 -r 互相引用）
+COPY requirements*.txt ./
+RUN pip install --no-cache-dir -r ${REQUIREMENTS}
 
 # 拷贝应用代码与前端
 COPY app ./app

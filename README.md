@@ -117,6 +117,34 @@ docker run -d -p 8000:8000 -v relay_data:/data \
 
 ---
 
+## 🏭 生产化部署
+
+试点用 SQLite + 进程内限流即可；面向学院/学校规模时按方案第十七节加固：
+
+```bash
+# 生产编排：app + PostgreSQL + Redis + 独立 Worker（镜像装 requirements-prod.txt）
+mkdir -p secrets && openssl rand -hex 32 > secrets/jwt_secret.txt && openssl rand -hex 32 > secrets/encryption_secret.txt
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+已内置的生产能力：
+
+| 维度 | 能力 | 开关 |
+|------|------|------|
+| 数据库 | PostgreSQL / MySQL | `DATABASE_URL=postgresql+psycopg://...`（装 `requirements-prod.txt`）|
+| 分布式限流 | Redis 固定窗口，故障自动回退进程内 | `REDIS_URL=redis://...` |
+| 监控 | Prometheus 指标 `/metrics`（请求/错误/token/点数）| `METRICS_ENABLED=true` |
+| 日志 | 结构化 JSON（ELK/Loki 友好）+ 访问日志中间件 | `LOG_FORMAT=json` |
+| 机密托管 | 密钥从挂载文件读取（Vault/KMS/K8s Secret）| `JWT_SECRET_FILE` / `ENCRYPTION_SECRET_FILE` |
+| 统一身份 | 真实 OIDC 授权码流程 | `SSO_MODE=oidc` + 端点配置 |
+| 就绪探针 | `/api/health/ready`（DB 连通 + 限流后端）| — |
+| Worker 扩展 | `python -m app.worker` 独立横向扩展 | `RUN_INPROCESS_WORKER=false` |
+
+> 未配置 `REDIS_URL`/`DATABASE_URL` 时自动用进程内限流 + SQLite，开发零依赖。
+> 前置 Nginx/网关做 TLS 与统一入口；监控接 Prometheus + Grafana 抓取 `/metrics`。
+
+---
+
 ## ✅ 测试
 
 ```powershell
@@ -211,6 +239,15 @@ for it in results["items"]:
 
 > 真实 Key 通过 Fernet 加密（密钥由 `ENCRYPTION_SECRET` 派生），用户与前端永远无法读取明文。
 
+### 关于「共享 ChatGPT Plus 账号」
+
+**ChatGPT Plus（¥/月 网页订阅）≠ OpenAI API**，两者是不同产品：
+
+- Plus 只授权 **个人在 ChatGPT 网页/App** 使用，**不含 API**，也没有官方接口可被程序调用。
+- 用脚本/浏览器自动化去「共享」一个 Plus 账号，违反 OpenAI 服务条款（禁止账号共享与自动化访问），有**封号风险**；且与本平台方案（第三节「不允许绕过第三方平台规则」、第十九节合规、禁止「公开共享 API Token / 违反供应商规则」）相冲突——因此平台**不提供** Plus 账号代理。
+- **合规且本平台原生支持的共享方式**：在 [platform.openai.com](https://platform.openai.com) 开通 **OpenAI API**（按 token 计费），生成一个 API Key，按上面的「Key 池管理」加入平台。这样**整组成员共用这一个 Key**，且每人有独立 Token、额度、计费与审计——正是中转站要解决的问题。
+- 若只想要「多人用网页版、按固定月费」，对应的官方产品是 **ChatGPT Team/Enterprise**（多席位，各自登录），但那是网页端、非 API，无法接入本平台。
+
 ---
 
 ## 🗂️ 项目结构
@@ -235,6 +272,9 @@ app/
   org.py         多级组织（学院/专业/课题组）与汇总
   governance.py  学校级预算熔断 / 操作审计 / 统计报表
   sso.py         学校统一身份认证（mock IdP / OIDC）
+  ratelimit.py   限流（进程内 + Redis 分布式，故障回退）
+  metrics.py     Prometheus 指标
+  logging_config.py  结构化 JSON 日志
   seed.py        建表 + 初始管理员 + mock 模型/Key + 默认套餐
   routers/
     auth.py      注册/登录 + SSO

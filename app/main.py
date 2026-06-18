@@ -4,21 +4,25 @@
 默认 SQLite + 内置 mock 供应商，开箱即用。
 """
 import os
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, worker
+from . import __version__, metrics, worker
 from .config import settings
+from .logging_config import configure_logging, logger
 from .routers import admin, auth, v1, web
 from .seed import init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
+    logger.info("启动中转站", extra={"event": "startup"})
     # 启动时初始化数据库（建表 + 初始管理员 + mock 模型/Key）
     init_db()
     # 启动应用内后台 Worker（处理批量异步任务）
@@ -32,8 +36,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
-    description="实验组 AI 大模型 API 中转站 —— Phase 1 MVP",
+    version=__version__,
+    description="实验组 AI 大模型 API 中转站",
     lifespan=lifespan,
 )
 
@@ -44,6 +48,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    started = time.time()
+    response = await call_next(request)
+    if request.url.path.startswith("/api"):
+        logger.info(
+            "request",
+            extra={
+                "event": "http",
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "latency_ms": int((time.time() - started) * 1000),
+            },
+        )
+    return response
 
 app.include_router(auth.router)
 app.include_router(web.router)
@@ -61,14 +83,37 @@ def ready():
     """就绪检查：验证数据库连通性（方案第四阶段运维）。"""
     from sqlalchemy import text
 
+    from . import ratelimit
     from .database import engine
 
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "ready", "database": "ok"}
+        return {"status": "ready", "database": "ok", "ratelimit_backend": ratelimit.backend()}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=503, content={"status": "not_ready", "database": str(exc)})
+
+
+@app.get("/metrics", tags=["meta"], include_in_schema=False)
+def prometheus_metrics():
+    """Prometheus 文本格式指标（方案第十七节监控）。"""
+    if not settings.metrics_enabled:
+        return PlainTextResponse("metrics disabled\n", status_code=404)
+    gauges = {}
+    try:
+        from .database import SessionLocal
+        from .models import Job, UsageLog, User
+
+        db = SessionLocal()
+        try:
+            gauges["relay_users"] = float(db.query(User).count())
+            gauges["relay_usage_logs"] = float(db.query(UsageLog).count())
+            gauges["relay_jobs"] = float(db.query(Job).count())
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return PlainTextResponse(metrics.render(gauges), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/compliance", tags=["meta"])

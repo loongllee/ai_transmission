@@ -3,10 +3,13 @@
 - MockProvider：内置离线供应商，无需任何真实 Key 即可跑通全链路。
 - OpenAICompatProvider：对接 OpenAI 兼容接口（/chat/completions）。
 """
+import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import httpx
+
+from .config import settings
 
 
 @dataclass
@@ -80,15 +83,29 @@ class OpenAICompatProvider(BaseProvider):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        text = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
-        in_tok = usage.get("prompt_tokens") or estimate_messages_tokens(messages)
-        out_tok = usage.get("completion_tokens") or estimate_tokens(text)
-        return ProviderResult(text=text, input_tokens=in_tok, output_tokens=out_tok, raw=data)
+        retries = max(0, int(settings.openai_max_retries))
+        last_exc = None
+        async with httpx.AsyncClient(timeout=settings.openai_timeout) as client:
+            for attempt in range(retries + 1):
+                try:
+                    resp = await client.post(url, headers=headers, json=payload)
+                    # 对 429/5xx 做退避重试
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        resp.raise_for_status()
+                    resp.raise_for_status()
+                    data = resp.json()
+                    text = data["choices"][0]["message"]["content"]
+                    usage = data.get("usage", {})
+                    in_tok = usage.get("prompt_tokens") or estimate_messages_tokens(messages)
+                    out_tok = usage.get("completion_tokens") or estimate_tokens(text)
+                    return ProviderResult(text=text, input_tokens=in_tok, output_tokens=out_tok, raw=data)
+                except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
+                    last_exc = exc
+                    if attempt < retries:
+                        await asyncio.sleep(0.5 * (2 ** attempt))  # 指数退避
+                        continue
+                    raise
+        raise last_exc  # pragma: no cover
 
 
 def get_provider(provider_name: str, base_url: Optional[str], api_key: Optional[str]) -> BaseProvider:
