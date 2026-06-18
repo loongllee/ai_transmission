@@ -108,9 +108,8 @@ def create_token(
     db.add(token)
     db.commit()
     db.refresh(token)
-    out = ApiTokenCreatedOut.model_validate(token)
-    out.plaintext_token = plaintext
-    return out
+    base = ApiTokenOut.model_validate(token)
+    return ApiTokenCreatedOut(**base.model_dump(), plaintext_token=plaintext)
 
 
 @router.post("/tokens/{token_id}/reset", response_model=ApiTokenCreatedOut)
@@ -122,9 +121,8 @@ def reset_token(token_id: int, user: User = Depends(get_current_user), db: Sessi
     token.status = "active"
     db.commit()
     db.refresh(token)
-    out = ApiTokenCreatedOut.model_validate(token)
-    out.plaintext_token = plaintext
-    return out
+    base = ApiTokenOut.model_validate(token)
+    return ApiTokenCreatedOut(**base.model_dump(), plaintext_token=plaintext)
 
 
 @router.post("/tokens/{token_id}/disable", response_model=ApiTokenOut)

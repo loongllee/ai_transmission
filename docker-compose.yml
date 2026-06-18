@@ -1,0 +1,60 @@
+# ===== 实验组 AI 大模型 API 中转站 — Docker Compose =====
+# 默认形态：单容器 + SQLite 持久化卷，开箱即用（内置 mock 供应商）。
+#   启动:  docker compose up -d --build
+#   访问:  http://localhost:8000   （默认管理员 admin / admin12345）
+#   日志:  docker compose logs -f app
+#   停止:  docker compose down
+#
+# 生产建议：放开下方 db / redis 服务，并把 app 的 DATABASE_URL 指向 postgres。
+
+services:
+  app:
+    build: .
+    image: ai-transmission:latest
+    container_name: ai-transmission
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # 生产务必修改下面两个密钥与管理员密码
+      JWT_SECRET: "change-me-to-a-long-random-string-please-32+"
+      ENCRYPTION_SECRET: "change-me-to-another-long-random-string"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin12345"
+      DATABASE_URL: "sqlite:////data/relay.db"
+      # 接入 PostgreSQL 时改为（并放开 db 服务、在 requirements 启用 psycopg）：
+      # DATABASE_URL: "postgresql+psycopg://relay:relay@db:5432/relay"
+    volumes:
+      - relay_data:/data
+    # 如需用 .env 注入更多配置，放开下一行：
+    # env_file: [.env]
+
+  # ---- 可选：PostgreSQL（生产数据库）----
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: ai-transmission-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: relay
+  #     POSTGRES_PASSWORD: relay
+  #     POSTGRES_DB: relay
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U relay"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # ---- 可选：Redis（分布式限流/缓存，替换进程内限流）----
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ai-transmission-redis
+  #   restart: unless-stopped
+  #   volumes:
+  #     - redis_data:/data
+
+volumes:
+  relay_data:
+  # pg_data:
+  # redis_data:

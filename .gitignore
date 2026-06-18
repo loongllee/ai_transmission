@@ -24,6 +24,7 @@ logs/
 _docx_unpacked/
 .pytest_cache/
 .mypy_cache/
+.claude/
 
 # IDE
 .idea/

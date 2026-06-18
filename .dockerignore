@@ -1,0 +1,28 @@
+# 版本控制
+.git
+.gitignore
+
+# 虚拟环境 / 缓存
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+
+# 本地数据与密钥（不进镜像，运行时通过环境变量注入）
+.env
+*.db
+*.sqlite*
+relay*.db
+
+# 测试与文档临时
+tests
+_docx_unpacked
+.claude
+
+# 其它
+*.log
+.idea
+.vscode
+README.md

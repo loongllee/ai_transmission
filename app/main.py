@@ -4,6 +4,7 @@
 默认 SQLite + 内置 mock 供应商，开箱即用。
 """
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,10 +15,19 @@ from .config import settings
 from .routers import admin, auth, v1, web
 from .seed import init_db
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时初始化数据库（建表 + 初始管理员 + mock 模型/Key）
+    init_db()
+    yield
+
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="实验组 AI 大模型 API 中转站 —— Phase 1 MVP",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -32,11 +42,6 @@ app.include_router(auth.router)
 app.include_router(web.router)
 app.include_router(v1.router)
 app.include_router(admin.router)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
 
 
 @app.get("/api/health", tags=["meta"])

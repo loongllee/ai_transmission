@@ -58,6 +58,42 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
+## 🐳 Docker 部署
+
+镜像自包含（默认 SQLite + mock 供应商），一条命令即可运行：
+
+```bash
+# 方式一：Docker Compose（推荐，含数据持久化卷）
+docker compose up -d --build
+# 访问 http://localhost:8000，停止：docker compose down
+
+# 方式二：纯 docker
+docker build -t ai-transmission:latest .
+docker run -d -p 8000:8000 -v relay_data:/data \
+  -e JWT_SECRET=请改成长随机串 \
+  -e ENCRYPTION_SECRET=请改成另一个长随机串 \
+  --name ai-transmission ai-transmission:latest
+```
+
+- SQLite 数据落在容器卷 `/data`（`relay_data`），重建容器不丢数据
+- 内置 `HEALTHCHECK`，`docker ps` 可见健康状态
+- 生产切换 PostgreSQL/Redis：放开 `docker-compose.yml` 中的 `db`/`redis` 服务，
+  并把 `DATABASE_URL` 指向 `postgresql+psycopg://...`（需在 `requirements.txt` 启用 `psycopg`）
+
+---
+
+## ✅ 测试
+
+```powershell
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+端到端冒烟测试（`tests/test_api.py`）覆盖：注册/登录、网页聊天与扣费、模型等级权限、
+内部 API Token 全流程、无效 Token 拒绝、管理后台与 Key 加密保密性。
+
+---
+
 ## 🧩 科研程序化 API 调用
 
 登录后在「API Token」页创建平台内部 Token（形如 `sk-relay-...`），即可在程序中调用：
