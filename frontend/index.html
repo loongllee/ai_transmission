@@ -96,6 +96,7 @@
       <button data-view="wallet" onclick="show('wallet')">额度/钱包</button>
       <button data-view="tokens" onclick="show('tokens')">API Token</button>
       <button data-view="usage" onclick="show('usage')">消费明细</button>
+      <button data-view="jobs" onclick="show('jobs')">批量任务</button>
       <button data-view="docs" onclick="show('docs')">API 文档</button>
       <button data-view="admin" id="nav-admin" class="hidden" onclick="show('admin')">管理后台</button>
     </nav>
@@ -175,6 +176,51 @@
           <thead><tr><th>时间</th><th>来源</th><th>等级</th><th>任务</th><th>输入</th><th>输出</th><th>状态</th></tr></thead>
           <tbody id="usage-rows"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Jobs -->
+    <section id="view-jobs" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">提交批量任务</h3>
+        <p class="muted" style="font-size:12px">需课题组成员及以上角色。每行一条，提交后进入异步队列由 Worker 处理；可在下方查看进度与结果。</p>
+        <div class="row">
+          <div style="flex:1">
+            <label>任务类型</label>
+            <select id="job-type">
+              <option value="batch_summary">批量摘要</option>
+              <option value="batch_translate">批量翻译</option>
+              <option value="batch_classify">批量分类</option>
+              <option value="batch_code_explain">批量代码解释</option>
+              <option value="batch_completion">批量生成</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>模型等级</label>
+            <select id="job-level"></select>
+          </div>
+        </div>
+        <label>批量内容（每行一条）</label>
+        <textarea id="job-items" rows="5" placeholder="第一篇论文摘要…&#10;第二段需要翻译的文本…"></textarea>
+        <div class="row" style="margin-top:12px;align-items:center">
+          <button id="job-submit" onclick="submitJob()">提交任务</button>
+          <button class="ghost" onclick="loadJobs()">刷新列表</button>
+          <span id="job-hint" class="muted" style="font-size:12px"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">我的任务</h3>
+        <table>
+          <thead><tr><th>ID</th><th>类型</th><th>等级</th><th>状态</th><th>进度</th><th>扣点</th><th>操作</th></tr></thead>
+          <tbody id="job-rows"></tbody>
+        </table>
+        <div id="job-results" class="hidden" style="margin-top:14px">
+          <h4 id="job-results-title"></h4>
+          <table>
+            <thead><tr><th>#</th><th>状态</th><th>输出</th></tr></thead>
+            <tbody id="job-result-rows"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -301,13 +347,14 @@ function logout(){ TOKEN=''; localStorage.removeItem('relay_jwt'); ME=null;
 
 /* ---------- 视图切换 ---------- */
 function show(view){
-  ['chat','wallet','tokens','usage','docs','admin'].forEach(v=>{
+  ['chat','wallet','tokens','usage','jobs','docs','admin'].forEach(v=>{
     document.getElementById('view-'+v).classList.toggle('hidden', v!==view);
   });
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
   if (view==='wallet') loadWallet();
   if (view==='tokens') loadTokens();
   if (view==='usage') loadUsage();
+  if (view==='jobs') initJobs();
   if (view==='docs') renderDocs();
   if (view==='admin') loadAdmin();
 }
@@ -418,6 +465,64 @@ async function loadUsage(){
       <td>${u.status==='success'?'✅':'⚠️ '+esc(u.status)}</td>`;
     tb.appendChild(tr);
   });
+}
+
+/* ---------- 批量任务 ---------- */
+let jobsInited = false;
+function initJobs(){
+  if (!jobsInited){
+    const sel = document.getElementById('job-level'); const csel = document.getElementById('chat-level');
+    sel.innerHTML = csel.innerHTML;  // 复用已加载的模型等级
+    document.getElementById('job-hint').textContent =
+      (['group','teacher','admin'].includes(ME.role)) ? '' : '当前角色无批量权限，提交将被拒绝。';
+    jobsInited = true;
+  }
+  loadJobs();
+}
+async function submitJob(){
+  const type = document.getElementById('job-type').value;
+  const level = document.getElementById('job-level').value;
+  const lines = document.getElementById('job-items').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!lines.length){ toast('请输入至少一条内容'); return; }
+  const items = lines.map((t,i)=>({id:'item_'+(i+1), text:t}));
+  const btn = document.getElementById('job-submit'); btn.disabled=true; btn.textContent='提交中…';
+  try{
+    await api('/api/web/jobs', {method:'POST', body: JSON.stringify({job_type:type, model_level:level, items:items})});
+    document.getElementById('job-items').value='';
+    toast('任务已提交并入队'); loadJobs();
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; btn.textContent='提交任务'; }
+}
+async function loadJobs(){
+  try{
+    const rows = await api('/api/web/jobs?limit=50'); const tb=document.getElementById('job-rows'); tb.innerHTML='';
+    rows.forEach(j=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${j.id}</td><td>${esc(j.job_type)}</td><td>${esc(j.model_level)}</td>
+        <td>${jobBadge(j.status)}</td><td>${j.processed_items}/${j.total_items}${j.failed_items?(' ✗'+j.failed_items):''}</td>
+        <td>${j.points_used}</td>
+        <td><button class="ghost" onclick="viewJob(${j.id})">查看结果</button></td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast(e.message); }
+}
+function jobBadge(s){
+  const map={queued:'⏳ 排队',running:'⚙️ 处理中',completed:'✅ 完成',failed:'⚠️ 失败',canceled:'🚫 取消',pending_confirm:'待确认'};
+  return map[s]||esc(s);
+}
+async function viewJob(id){
+  try{
+    const r = await api('/api/web/jobs/'+id+'/results');
+    document.getElementById('job-results').classList.remove('hidden');
+    document.getElementById('job-results-title').textContent = '任务 #'+id+' 结果（'+r.job.status+'）';
+    const tb=document.getElementById('job-result-rows'); tb.innerHTML='';
+    r.items.forEach(it=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${esc(it.item_ref||it.seq)}</td><td>${it.status==='done'?'✅':'⚠️'}</td>
+        <td style="white-space:pre-wrap">${esc(it.output_text||it.error||'')}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast(e.message); }
 }
 
 /* ---------- Docs ---------- */

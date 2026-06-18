@@ -1,19 +1,21 @@
 """模型路由、Key 池调度与点数计费（方案第十、十二节）。"""
 import math
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import ApiKeyPool, Model, WalletAccount
+from .models import ApiKeyPool, Model, ResearchGroup, WalletAccount
 
 # 模型等级排序，用于 model_scope 权限判断
 LEVEL_ORDER = {"basic": 1, "standard": 2, "advanced": 3}
 
 # 扣费顺序（方案 10.2）
+# 网页聊天：免费 → 学校补贴 → 个人自购
 WEB_DEDUCT_ORDER = ["free_points", "subsidy_points", "paid_points"]
-API_DEDUCT_ORDER = ["project_points", "subsidy_points", "free_points", "paid_points"]
+# 科研 API：个人项目 → 课题组共享 → 学校补贴 → 个人免费 → 个人自购
+#   （课题组共享额度在 _deduction_targets 中按 group 单独插入）
 
 
 def level_allowed(requested_level: str, max_scope: str) -> bool:
@@ -85,18 +87,80 @@ def wallet_balance(wallet: WalletAccount) -> int:
     )
 
 
-def deduct_points(wallet: WalletAccount, points: int, order: List[str]) -> int:
-    """按给定桶顺序扣点，返回实际扣除点数（余额不足时尽量扣，并钳制到 0）。"""
+# --------------------------------------------------------------------------
+# 钱包 / 课题组 共享额度的统一扣费（方案第十节）
+# --------------------------------------------------------------------------
+def get_wallet(db: Session, user_id: int) -> WalletAccount:
+    wallet = db.query(WalletAccount).filter(WalletAccount.user_id == user_id).first()
+    if not wallet:
+        wallet = WalletAccount(user_id=user_id)
+        db.add(wallet)
+        db.commit()
+        db.refresh(wallet)
+    return wallet
+
+
+def get_group(db: Session, group_id: Optional[int]) -> Optional[ResearchGroup]:
+    if not group_id:
+        return None
+    return db.get(ResearchGroup, group_id)
+
+
+def _deduction_targets(db: Session, user, source: str):
+    """构造有序扣费目标。
+
+    每个目标是 ('wallet', bucket名) 或 ('group', ResearchGroup 对象)。
+    """
+    wallet = get_wallet(db, user.id)
+    group = get_group(db, getattr(user, "group_id", None))
+    if source == "web":
+        targets: List[Tuple[str, object]] = [("wallet", b) for b in WEB_DEDUCT_ORDER]
+    else:  # api / job：个人项目 → 课题组共享 → 学校补贴 → 个人免费 → 个人自购
+        targets = [("wallet", "project_points")]
+        if group and group.status == "active":
+            targets.append(("group", group))
+        targets += [("wallet", "subsidy_points"), ("wallet", "free_points"), ("wallet", "paid_points")]
+    return wallet, group, targets
+
+
+def available_balance(db: Session, user, source: str) -> int:
+    """可用余额（API 来源含个人项目额度与课题组共享额度）。"""
+    _wallet, _group, targets = _deduction_targets(db, user, source)
+    total = 0
+    for kind, ref in targets:
+        if kind == "wallet":
+            total += int(getattr(_wallet, ref) or 0)
+        else:
+            total += int(ref.project_points or 0)
+    return total
+
+
+def charge(db: Session, user, points: int, source: str) -> dict:
+    """按扣费顺序扣点，返回 {charged, from_group, balance_after}。余额不足时尽量扣。"""
+    wallet, _group, targets = _deduction_targets(db, user, source)
     remaining = points
-    for bucket in order:
+    from_group = 0
+    for kind, ref in targets:
         if remaining <= 0:
             break
-        available = int(getattr(wallet, bucket) or 0)
-        if available <= 0:
-            continue
-        take = min(available, remaining)
-        setattr(wallet, bucket, available - take)
-        remaining -= take
-    actually = points - remaining
-    wallet.total_used_points = int(wallet.total_used_points or 0) + actually
-    return actually
+        if kind == "wallet":
+            avail = int(getattr(wallet, ref) or 0)
+            take = min(avail, remaining)
+            if take:
+                setattr(wallet, ref, avail - take)
+                remaining -= take
+        else:  # group
+            avail = int(ref.project_points or 0)
+            take = min(avail, remaining)
+            if take:
+                ref.project_points = avail - take
+                ref.total_used_points = int(ref.total_used_points or 0) + take
+                from_group += take
+                remaining -= take
+    charged = points - remaining
+    wallet.total_used_points = int(wallet.total_used_points or 0) + (charged - from_group)
+    return {
+        "charged": charged,
+        "from_group": from_group,
+        "balance_after": available_balance(db, user, source),
+    }

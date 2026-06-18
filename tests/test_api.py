@@ -1,20 +1,8 @@
 """端到端冒烟测试：认证 → 网页聊天 → API Token 调用 → 钱包/额度 → 管理后台。
 
-使用独立的临时 SQLite 库，内置 mock 供应商，无需任何真实 Key。
+测试环境由 tests/conftest.py 统一设定（独立 SQLite 库 + 内置 mock 供应商）。
 运行：pytest -q
 """
-import os
-import tempfile
-
-# 必须在导入 app 之前设置环境变量（settings 在导入时读取）
-_DB = os.path.join(tempfile.gettempdir(), "relay_pytest.db")
-if os.path.exists(_DB):
-    os.remove(_DB)
-os.environ["DATABASE_URL"] = "sqlite:///" + _DB.replace("\\", "/")
-os.environ["ENVIRONMENT"] = "test"
-os.environ["JWT_SECRET"] = "test-secret"
-os.environ["ENCRYPTION_SECRET"] = "test-enc-secret"
-
 import pytest
 from fastapi.testclient import TestClient
 

@@ -7,11 +7,32 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
+from sqlalchemy import func
+
 from ..database import get_db
 from ..deps import require_admin
-from ..models import ApiKeyPool, BillingRecord, Model, UsageLog, User, WalletAccount
+from ..models import (
+    Alert,
+    ApiKeyPool,
+    BillingRecord,
+    Job,
+    Model,
+    ResearchGroup,
+    UsageLog,
+    User,
+    UserApiToken,
+    WalletAccount,
+)
 from ..schemas import (
+    AddMemberRequest,
+    AlertOut,
     GrantPointsRequest,
+    GroupGrantRequest,
+    GroupIn,
+    GroupOut,
+    GroupStatsOut,
     KeyIn,
     KeyOut,
     ModelIn,
@@ -161,14 +182,121 @@ def list_logs(
     return q.order_by(UsageLog.id.desc()).limit(limit).all()
 
 
+# ---------- Token 封禁（异常 API 调用封禁，方案第二十节）----------
+@router.post("/tokens/{token_id}/disable", response_model=dict)
+def admin_disable_token(token_id: int, db: Session = Depends(get_db)):
+    token = db.get(UserApiToken, token_id)
+    if not token:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Token 不存在")
+    token.status = "disabled"
+    db.commit()
+    return {"ok": True, "token_id": token_id, "status": "disabled"}
+
+
+# ---------- 课题组 / 项目额度（方案第八、十节）----------
+@router.get("/groups", response_model=List[GroupOut])
+def list_groups(db: Session = Depends(get_db)):
+    return db.query(ResearchGroup).order_by(ResearchGroup.id.asc()).all()
+
+
+@router.post("/groups", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
+def create_group(payload: GroupIn, db: Session = Depends(get_db)):
+    if db.query(ResearchGroup).filter(ResearchGroup.name == payload.name).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "课题组名称已存在")
+    group = ResearchGroup(
+        name=payload.name,
+        owner_user_id=payload.owner_user_id,
+        project_points=payload.project_points,
+        status="active",
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+@router.post("/groups/{group_id}/grant", response_model=GroupOut)
+def grant_group(group_id: int, payload: GroupGrantRequest, db: Session = Depends(get_db)):
+    group = db.get(ResearchGroup, group_id)
+    if not group:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "课题组不存在")
+    group.project_points = int(group.project_points or 0) + int(payload.points)
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+@router.post("/groups/{group_id}/members", response_model=dict)
+def add_group_member(group_id: int, payload: AddMemberRequest, db: Session = Depends(get_db)):
+    group = db.get(ResearchGroup, group_id)
+    if not group:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "课题组不存在")
+    user = db.get(User, payload.user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
+    user.group_id = group_id
+    db.commit()
+    return {"ok": True, "group_id": group_id, "user_id": payload.user_id}
+
+
+@router.get("/groups/{group_id}/stats", response_model=GroupStatsOut)
+def group_stats(group_id: int, db: Session = Depends(get_db)):
+    group = db.get(ResearchGroup, group_id)
+    if not group:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "课题组不存在")
+    members = db.query(User).filter(User.group_id == group_id).count()
+    total_calls = db.query(UsageLog).filter(UsageLog.group_id == group_id).count()
+    total_tokens = int(
+        db.query(func.coalesce(func.sum(UsageLog.input_tokens + UsageLog.output_tokens), 0))
+        .filter(UsageLog.group_id == group_id)
+        .scalar()
+        or 0
+    )
+    return GroupStatsOut(
+        group_id=group_id,
+        name=group.name,
+        members=members,
+        project_points_remaining=int(group.project_points or 0),
+        total_used_points=int(group.total_used_points or 0),
+        total_calls=total_calls,
+        total_tokens=total_tokens,
+    )
+
+
+# ---------- 异常告警（方案第十五节）----------
+@router.get("/alerts", response_model=List[AlertOut])
+def list_alerts(
+    limit: int = 100,
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(limit, 500))
+    q = db.query(Alert)
+    if status_filter:
+        q = q.filter(Alert.status == status_filter)
+    return q.order_by(Alert.id.desc()).limit(limit).all()
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertOut)
+def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
+    alert = db.get(Alert, alert_id)
+    if not alert:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "告警不存在")
+    alert.status = "resolved"
+    alert.resolved_at = datetime.utcnow()
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
 # ---------- 简单统计 ----------
 @router.get("/stats", response_model=dict)
 def stats(db: Session = Depends(get_db)):
-    total_users = db.query(User).count()
-    total_calls = db.query(UsageLog).count()
-    total_points = db.query(BillingRecord).count()
     return {
-        "total_users": total_users,
-        "total_calls": total_calls,
-        "total_billing_records": total_points,
+        "total_users": db.query(User).count(),
+        "total_calls": db.query(UsageLog).count(),
+        "total_billing_records": db.query(BillingRecord).count(),
+        "total_jobs": db.query(Job).count(),
+        "open_alerts": db.query(Alert).filter(Alert.status == "open").count(),
+        "groups": db.query(ResearchGroup).count(),
     }

@@ -6,8 +6,8 @@ from .config import settings
 
 connect_args = {}
 if settings.database_url.startswith("sqlite"):
-    # SQLite 在多线程 FastAPI 下需要关闭线程检查
-    connect_args = {"check_same_thread": False}
+    # SQLite 在多线程 FastAPI 下需要关闭线程检查；timeout 缓解 Worker 与请求线程的写锁竞争
+    connect_args = {"check_same_thread": False, "timeout": 30}
 
 engine = create_engine(
     settings.database_url,

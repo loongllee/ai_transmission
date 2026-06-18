@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import worker
 from .config import settings
 from .routers import admin, auth, v1, web
 from .seed import init_db
@@ -20,7 +21,13 @@ from .seed import init_db
 async def lifespan(app: FastAPI):
     # 启动时初始化数据库（建表 + 初始管理员 + mock 模型/Key）
     init_db()
-    yield
+    # 启动应用内后台 Worker（处理批量异步任务）
+    if settings.run_inprocess_worker:
+        worker.start_background_worker()
+    try:
+        yield
+    finally:
+        worker.stop_background_worker()
 
 
 app = FastAPI(

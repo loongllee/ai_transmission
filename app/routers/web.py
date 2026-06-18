@@ -7,15 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import billing, chat
+from .. import jobs as jobs_service
 from ..database import get_db
 from ..deps import Principal, get_current_user, web_principal
-from ..models import Model, User, UserApiToken, UsageLog, WalletAccount
+from ..models import Job, JobItem, Model, User, UserApiToken, UsageLog, WalletAccount
 from ..schemas import (
     ApiTokenCreatedOut,
     ApiTokenOut,
     ChatRequest,
     ChatResponse,
     CreateTokenRequest,
+    JobCreateRequest,
+    JobOut,
+    JobResultOut,
     QuotaOut,
     UsageLogOut,
     UserOut,
@@ -56,10 +60,9 @@ def wallet(user: User = Depends(get_current_user), db: Session = Depends(get_db)
 
 @router.get("/quota", response_model=QuotaOut)
 def quota(principal: Principal = Depends(web_principal), db: Session = Depends(get_db)):
-    w = _get_wallet(db, principal.user.id)
     return QuotaOut(
         role=principal.user.role,
-        balance=billing.wallet_balance(w),
+        balance=billing.available_balance(db, principal.user, "web"),
         daily_request_limit=principal.daily_request_limit,
         daily_token_limit=principal.daily_token_limit,
         rate_limit_per_minute=principal.rate_limit_per_minute,
@@ -176,3 +179,45 @@ async def web_chat(
         payload.temperature or 0.7,
     )
     return result
+
+
+# ---------- 批量任务（网页端，第二阶段）----------
+@router.get("/jobs", response_model=List[JobOut])
+def web_list_jobs(limit: int = 50, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 200))
+    return (
+        db.query(Job).filter(Job.user_id == user.id).order_by(Job.id.desc()).limit(limit).all()
+    )
+
+
+@router.post("/jobs", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+def web_create_job(
+    payload: JobCreateRequest,
+    principal: Principal = Depends(web_principal),
+    db: Session = Depends(get_db),
+):
+    if not principal.allow_batch:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "当前角色无批量任务权限（需课题组成员及以上）")
+    items = [it.model_dump() for it in payload.items]
+    return jobs_service.create_job(
+        db,
+        user=principal.user,
+        token=None,
+        source="web",
+        model_scope=principal.model_scope,
+        job_type=payload.job_type,
+        model_level=payload.model_level,
+        task_type=payload.task_type,
+        items=items,
+        max_tokens=payload.max_tokens or 256,
+        auto_confirm=True,  # 网页端提交即确认入队
+    )
+
+
+@router.get("/jobs/{job_id}/results", response_model=JobResultOut)
+def web_job_results(job_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
+    items = db.query(JobItem).filter(JobItem.job_id == job.id).order_by(JobItem.seq.asc()).all()
+    return {"job": job, "items": items}

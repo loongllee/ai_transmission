@@ -194,3 +194,90 @@ class ContributedApiKey(Base):
     expires_at = Column(DateTime)
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+# ============================ 第二阶段：科研 API 增强 ============================
+
+
+class ResearchGroup(Base):
+    """课题组 / 项目（方案第八节课题组资源池 / 第十节项目额度）。
+
+    持有一份共享点数额度 project_points，供组内成员的科研 API 调用优先扣除。
+    """
+
+    __tablename__ = "research_groups"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False, unique=True)
+    owner_user_id = Column(BigInteger)
+    project_points = Column(BigInteger, default=0)  # 课题组共享额度
+    total_used_points = Column(BigInteger, default=0)
+    daily_point_limit = Column(BigInteger)  # 可选每日上限（预留）
+    status = Column(String(30), nullable=False, default="active")
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class Job(Base):
+    """批量异步任务（方案 13.3 / 第十四节异步任务队列）。"""
+
+    __tablename__ = "jobs"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    group_id = Column(BigInteger)
+    token_id = Column(BigInteger)
+    source = Column(String(20), default="api")  # api / web
+    job_type = Column(String(50), nullable=False)
+    model_level = Column(String(50), nullable=False, default="basic")
+    task_type = Column(String(100))
+    # pending_confirm / queued / running / completed / failed / canceled
+    status = Column(String(30), nullable=False, default="pending_confirm", index=True)
+    total_items = Column(Integer, default=0)
+    processed_items = Column(Integer, default=0)
+    failed_items = Column(Integer, default=0)
+    estimated_points = Column(BigInteger, default=0)
+    points_used = Column(BigInteger, default=0)
+    max_tokens = Column(Integer, default=256)
+    error = Column(Text)
+    created_at = Column(DateTime, default=_now, index=True)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+    confirmed_at = Column(DateTime)
+    finished_at = Column(DateTime)
+
+
+class JobItem(Base):
+    """批量任务的单个条目。"""
+
+    __tablename__ = "job_items"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    job_id = Column(BigInteger, ForeignKey("jobs.id"), nullable=False, index=True)
+    item_ref = Column(String(200))  # 用户提供的条目 id
+    seq = Column(Integer, default=0)
+    input_text = Column(Text)
+    output_text = Column(Text)
+    status = Column(String(30), default="pending")  # pending / done / error
+    input_tokens = Column(BigInteger, default=0)
+    output_tokens = Column(BigInteger, default=0)
+    points_used = Column(BigInteger, default=0)
+    error = Column(String(255))
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class Alert(Base):
+    """异常调用告警（方案第十五节异常调用告警 / 第二十节风控）。"""
+
+    __tablename__ = "alerts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, index=True)
+    token_id = Column(BigInteger)
+    alert_type = Column(String(50))  # high_error_rate / rate_abuse / budget_breach
+    severity = Column(String(20), default="warning")  # info / warning / critical
+    message = Column(Text)
+    status = Column(String(20), default="open")  # open / resolved
+    auto_action = Column(String(50), default="none")  # token_disabled / none
+    created_at = Column(DateTime, default=_now, index=True)
+    resolved_at = Column(DateTime)

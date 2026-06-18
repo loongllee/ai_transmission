@@ -8,7 +8,9 @@
 
 ---
 
-## ✨ 已实现能力（对应方案第二十一节第一阶段验收）
+## ✨ 已实现能力
+
+### 第一阶段：最小可用版本（方案第二十一节第一阶段验收）
 
 | 能力 | 说明 |
 |------|------|
@@ -23,7 +25,19 @@
 | 管理员后台 | 用户/模型/Key/日志管理、额度发放、统计（方案第十五节） |
 | 限流熔断 | 每分钟/每日请求数、每日 Token 上限（方案第十节，进程内实现） |
 
-> 第二/三/四阶段（异步批量任务队列、课题组额度、学生自愿购买 Token、贡献账号补偿、学校统一认证等）尚未实现；`contributed_api_keys` 表结构已预留。
+### 第二阶段：科研 API 增强（方案第二十一节第二阶段验收）
+
+| 能力 | 说明 |
+|------|------|
+| 批量任务接口 | `/api/v1/jobs` 提交批量摘要/翻译/分类/代码解释/生成（方案 13.3） |
+| 异步任务队列 | 数据库队列 + Worker（应用内线程，或 `python -m app.worker` 独立扩展）（方案第十四节） |
+| 费用预估 | `/api/v1/jobs/estimate`，确认后入队（方案第十四节“估算→确认”） |
+| 课题组/项目额度 | 课题组共享额度池，科研 API 优先扣除；成员/充值/用量统计（方案第八、十节） |
+| 异常告警与封禁 | 滑动窗口错误检测，超阈值告警并自动停用 Token（方案第十五、二十节） |
+| 任务状态/结果 | `/api/v1/jobs/{id}`、`/results`，网页端「批量任务」页可视化 |
+
+> 第三/四阶段（学生自愿购买 Token、贡献账号补偿、学校统一认证等）尚未实现；
+> `contributed_api_keys` 表结构已预留。
 
 ---
 
@@ -119,9 +133,47 @@ print(r.json()["content"])
 |------|------|------|
 | POST | `/api/v1/llm/chat` | 通用聊天 |
 | POST | `/api/v1/llm/completions` | 文本生成 |
+| POST | `/api/v1/jobs` | 提交批量任务（需 Token `allow_batch`） |
+| POST | `/api/v1/jobs/estimate` | 批量任务费用预估 |
+| GET  | `/api/v1/jobs/{id}` | 查询任务状态 |
+| GET  | `/api/v1/jobs/{id}/results` | 下载任务结果 |
+| POST | `/api/v1/jobs/{id}/confirm` | 确认入队（未自动确认时） |
+| POST | `/api/v1/jobs/{id}/cancel` | 取消任务 |
 | GET  | `/api/v1/quota/me` | 查询个人额度 |
 | GET  | `/api/v1/usage/me` | 查询调用记录 |
 | GET  | `/api/v1/wallet/me` | 查询点数账户 |
+
+### 批量任务示例（方案第十四节）
+
+```python
+import httpx, time
+H = {"Authorization": "Bearer sk-relay-你的Token"}
+base = "http://localhost:8000"
+
+# 1) 提交批量摘要（auto_confirm=True 直接入队）
+job = httpx.post(f"{base}/api/v1/jobs", headers=H, json={
+    "job_type": "batch_summary",          # summary/translate/classify/code_explain/completion
+    "model_level": "basic",
+    "auto_confirm": True,
+    "items": [
+        {"id": "paper_001", "text": "Large language models have demonstrated..."},
+        {"id": "paper_002", "text": "Experimental results show..."},
+    ],
+}).json()
+
+# 2) 轮询状态，完成后取结果
+while True:
+    st = httpx.get(f"{base}/api/v1/jobs/{job['id']}", headers=H).json()
+    if st["status"] in ("completed", "failed"):
+        break
+    time.sleep(2)
+results = httpx.get(f"{base}/api/v1/jobs/{job['id']}/results", headers=H).json()
+for it in results["items"]:
+    print(it["item_ref"], "->", it["output_text"])
+```
+
+> **Worker**：应用内默认随服务启动一个后台 Worker 处理队列（`RUN_INPROCESS_WORKER=true`）。
+> 生产可关闭它并单独运行 `python -m app.worker` 横向扩展多个 Worker（队列可换成 RabbitMQ/Kafka/Redis Stream，接口不变）。
 
 ---
 
@@ -153,16 +205,22 @@ app/
   deps.py        认证依赖与 Principal（统一网页/API 调用主体）
   ratelimit.py   进程内限流
   providers.py   供应商适配（mock + OpenAI 兼容）
-  billing.py     模型路由 / Key 调度 / 点数计费
+  billing.py     模型路由 / Key 调度 / 点数计费 / 课题组共享额度
   chat.py        调用编排：限流→路由→余额→调用→扣费→审计
+  jobs.py        批量任务服务（创建/估算/确认/取消）
+  worker.py      异步队列 Worker（应用内线程 + 独立进程）
+  alerts.py      异常调用检测与自动封禁
   seed.py        建表 + 初始管理员 + mock 模型/Key
   routers/
     auth.py      注册/登录
-    web.py       网页端（钱包/Token/用量/聊天）
-    v1.py        科研 API（方案第十三节）
-    admin.py     管理后台（方案第十五节）
+    web.py       网页端（钱包/Token/用量/聊天/批量任务）
+    v1.py        科研 API（聊天/批量任务，方案第十三节）
+    admin.py     管理后台（用户/Key/课题组/告警，方案第十五节）
 frontend/
-  index.html     自包含单页前端（聊天/钱包/Token/用量/文档/管理）
+  index.html     自包含单页前端（聊天/钱包/Token/用量/批量任务/文档/管理）
+tests/
+  test_api.py    第一阶段端到端测试
+  test_phase2.py 第二阶段端到端测试（批量/队列/课题组/告警）
 ```
 
 ---
@@ -179,7 +237,8 @@ frontend/
 
 ## 🛣️ 后续阶段（Roadmap）
 
-- **第二阶段**：批量任务接口、异步队列（Worker）、课题组/项目额度、费用预估、异常告警
+- ~~**第一阶段**：登录、网页聊天、内部 Token、通用 API、Key 池、点数计费、日志、管理后台~~ ✅ 已完成
+- ~~**第二阶段**：批量任务接口、异步队列（Worker）、课题组/项目额度、费用预估、异常告警~~ ✅ 已完成
 - **第三阶段**：套餐与充值订单、消费流水报表、学生自愿购买 Token、贡献账号授权与补偿
 - **第四阶段**：学校统一身份认证、多级（学院/专业/课题组）管理、预算熔断、大规模审计与运维
 

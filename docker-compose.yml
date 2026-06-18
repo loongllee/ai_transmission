@@ -24,10 +24,26 @@ services:
       DATABASE_URL: "sqlite:////data/relay.db"
       # 接入 PostgreSQL 时改为（并放开 db 服务、在 requirements 启用 psycopg）：
       # DATABASE_URL: "postgresql+psycopg://relay:relay@db:5432/relay"
+      # 默认随服务启动应用内后台 Worker 处理批量任务；
+      # 若改用下方独立 worker 服务横向扩展，这里设为 "false"。
+      RUN_INPROCESS_WORKER: "true"
     volumes:
       - relay_data:/data
     # 如需用 .env 注入更多配置，放开下一行：
     # env_file: [.env]
+
+  # ---- 可选：独立批量任务 Worker（横向扩展，需把 app 的 RUN_INPROCESS_WORKER 设为 false）----
+  # worker:
+  #   build: .
+  #   image: ai-transmission:latest
+  #   container_name: ai-transmission-worker
+  #   restart: unless-stopped
+  #   command: ["python", "-m", "app.worker"]
+  #   environment:
+  #     ENCRYPTION_SECRET: "change-me-to-another-long-random-string"  # 必须与 app 一致
+  #     DATABASE_URL: "sqlite:////data/relay.db"
+  #   volumes:
+  #     - relay_data:/data
 
   # ---- 可选：PostgreSQL（生产数据库）----
   # db:

@@ -64,6 +64,7 @@ class UsageInfo(BaseModel):
     input_tokens: int
     output_tokens: int
     points_used: int
+    from_group: int = 0  # 本次从课题组共享额度扣除的点数
 
 
 class ChatResponse(BaseModel):
@@ -200,3 +201,117 @@ class UpdateUserRequest(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None
     group_id: Optional[int] = None
+
+
+# ---------- 第二阶段：批量任务 ----------
+class BatchItem(BaseModel):
+    id: Optional[str] = None
+    text: str
+
+
+class JobEstimateRequest(BaseModel):
+    model_config = _CFG
+    model_level: str = "basic"
+    items: List[BatchItem]
+    max_tokens: Optional[int] = 256
+
+
+class JobEstimateOut(BaseModel):
+    items: int
+    estimated_input_tokens: int
+    estimated_points: int
+    model_available: bool
+
+
+class JobCreateRequest(BaseModel):
+    model_config = _CFG
+    job_type: str  # batch_summary / batch_translate / batch_classify / batch_code_explain / batch_completion
+    model_level: str = "basic"
+    task_type: Optional[str] = None
+    items: List[BatchItem]
+    max_tokens: Optional[int] = 256
+    auto_confirm: bool = False
+
+
+class JobOut(BaseModel):
+    model_config = _CFG
+    id: int
+    job_type: str
+    model_level: str
+    task_type: Optional[str] = None
+    status: str
+    total_items: int
+    processed_items: int
+    failed_items: int
+    estimated_points: int
+    points_used: int
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+class JobItemOut(BaseModel):
+    model_config = _CFG
+    item_ref: Optional[str] = None
+    seq: int
+    status: str
+    input_tokens: int
+    output_tokens: int
+    points_used: int
+    output_text: Optional[str] = None
+    error: Optional[str] = None
+
+
+class JobResultOut(BaseModel):
+    job: JobOut
+    items: List[JobItemOut]
+
+
+# ---------- 第二阶段：课题组 / 项目额度 ----------
+class GroupIn(BaseModel):
+    name: str
+    owner_user_id: Optional[int] = None
+    project_points: int = 0
+
+
+class GroupOut(BaseModel):
+    model_config = _CFG
+    id: int
+    name: str
+    owner_user_id: Optional[int] = None
+    project_points: int
+    total_used_points: int
+    status: str
+
+
+class GroupGrantRequest(BaseModel):
+    points: int
+
+
+class AddMemberRequest(BaseModel):
+    user_id: int
+
+
+class GroupStatsOut(BaseModel):
+    group_id: int
+    name: str
+    members: int
+    project_points_remaining: int
+    total_used_points: int
+    total_calls: int
+    total_tokens: int
+
+
+# ---------- 第二阶段：告警 ----------
+class AlertOut(BaseModel):
+    model_config = _CFG
+    id: int
+    user_id: Optional[int] = None
+    token_id: Optional[int] = None
+    alert_type: Optional[str] = None
+    severity: Optional[str] = None
+    message: Optional[str] = None
+    status: str
+    auto_action: Optional[str] = None
+    created_at: Optional[datetime] = None

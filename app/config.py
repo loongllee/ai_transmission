@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     default_rate_limit_per_minute: int = 10
     default_daily_token_limit: int = 200000
 
+    # ---- 第二阶段：异步批量任务 / 风控 ----
+    run_inprocess_worker: bool = True   # 应用内启动后台 Worker（试点零依赖）
+    worker_poll_interval: float = 2.0   # Worker 轮询间隔（秒）
+    worker_batch_per_tick: int = 10     # 每轮最多处理的任务数
+    batch_max_items: int = 200          # 单个批量任务最大条目数
+    alert_error_window_seconds: int = 60
+    alert_error_threshold: int = 5      # 窗口内错误数达到阈值则告警
+    alert_auto_disable_token: bool = True  # 触发告警时自动停用 Token
+
     # CORS
     cors_origins: str = "*"
 
