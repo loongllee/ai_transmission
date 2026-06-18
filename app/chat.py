@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import alerts, billing, ratelimit
+from . import alerts, billing, governance, ratelimit
 from .deps import Principal
 from .models import BillingRecord, UsageLog, User, UserApiToken
 from .providers import estimate_messages_tokens, get_provider
@@ -61,6 +61,12 @@ async def execute_chat(
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,
             f"点数余额不足：预计需 {est_points} 点，当前可用 {balance} 点",
+        )
+
+    # 2.5) 学校级预算熔断（方案第四阶段）
+    if governance.budget_blocked(db):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "学校预算已熔断，平台暂停调用，请联系管理员"
         )
 
     # 3) 调用真实/模拟供应商
@@ -138,6 +144,9 @@ async def execute_chat(
         )
     )
     db.commit()
+
+    # 7) 累加学校预算用量（达上限即熔断）
+    governance.consume_budget(db, points)
 
     return {
         "request_id": request_id,

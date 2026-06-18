@@ -76,6 +76,8 @@
       <label>用户名</label><input id="li-user" autocomplete="username" />
       <label>密码</label><input id="li-pass" type="password" autocomplete="current-password" />
       <div style="margin-top:16px"><button onclick="doLogin()">登录</button></div>
+      <div style="margin:16px 0;text-align:center;color:var(--muted);font-size:12px">— 或 —</div>
+      <button class="ghost" style="width:100%" onclick="ssoLogin()">🎓 学校统一身份认证登录（模拟）</button>
       <p class="muted" style="font-size:12px;margin-top:14px">默认管理员：admin / admin12345（首次启动自动创建）</p>
     </div>
     <div id="form-reg" class="hidden">
@@ -353,6 +355,30 @@
           <tbody id="comp-rows"></tbody>
         </table>
       </div>
+      <div class="card">
+        <h3 style="margin-top:0">学校级预算与熔断</h3>
+        <div id="budget-status" class="muted" style="margin-bottom:10px">—</div>
+        <div class="row" style="align-items:center">
+          <input id="budget-limit" type="number" placeholder="预算上限（点数）" style="max-width:220px" />
+          <button onclick="setBudget()">设置预算</button>
+          <button class="ghost" onclick="resetBudget()">重置用量</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin-bottom:0">用量达上限即熔断，平台暂停调用，直至管理员调整或重置。</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">组织结构（学院/专业/课题组）</h3>
+        <table>
+          <thead><tr><th>ID</th><th>名称</th><th>类型</th><th>上级</th><th>成员</th><th>调用</th><th>Token</th></tr></thead>
+          <tbody id="org-rows"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">操作审计日志</h3>
+        <table>
+          <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>详情</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 </div>
@@ -389,6 +415,21 @@ async function doLogin(){
     const p = document.getElementById('li-pass').value;
     const d = await api('/api/auth/login', {method:'POST', body: JSON.stringify({username:u, password:p})});
     TOKEN = d.access_token; localStorage.setItem('relay_jwt', TOKEN);
+    await boot();
+  }catch(e){ toast(e.message); }
+}
+async function ssoLogin(){
+  // 模拟学校 IdP：填写校园身份，换取授权码后回调换平台 JWT，首次自动开户
+  const username = prompt('学号/工号（模拟统一身份）', 'stu' + Math.floor(1000+Math.random()*9000));
+  if (!username) return;
+  try{
+    const college = prompt('学院（可空）', '信息学院') || null;
+    const major = prompt('专业（可空）', '计算机') || null;
+    const group = prompt('课题组（可空）', '') || null;
+    const c = await api('/api/auth/sso/mock/login', {method:'POST', body: JSON.stringify({username, college, major, group})});
+    const d = await api('/api/auth/sso/callback', {method:'POST', body: JSON.stringify({code:c.code})});
+    TOKEN = d.access_token; localStorage.setItem('relay_jwt', TOKEN);
+    toast(d.created ? 'SSO 首次登录，已自动开户' : 'SSO 登录成功');
     await boot();
   }catch(e){ toast(e.message); }
 }
@@ -708,7 +749,27 @@ async function loadAdmin(){
     const comp = await api('/api/v1/admin/compensation'); const cb=document.getElementById('comp-rows'); cb.innerHTML='';
     comp.forEach(c=>{ const tr=document.createElement('tr');
       tr.innerHTML = `<td>${esc(c.username||c.contributor_user_id)}</td><td>${c.accounts}</td><td>${c.total_cost}</td><td>${c.pilot_subsidy}</td><td><b>${c.suggested_compensation}</b></td>`; cb.appendChild(tr); });
+    // 第四阶段：预算 / 组织 / 审计
+    const bud = await api('/api/v1/admin/budget');
+    document.getElementById('budget-status').innerHTML = bud
+      ? `状态 <b>${bud.status==='tripped'?'🔴 已熔断':'🟢 正常'}</b> · 上限 ${bud.limit_points} · 已用 ${bud.used_points} · 剩余 ${Math.max(0,bud.limit_points-bud.used_points)}`
+      : '未设置学校预算（不限额）';
+    const orgs = await api('/api/v1/admin/reports/by-org'); const orb=document.getElementById('org-rows'); orb.innerHTML='';
+    orgs.forEach(u=>{ const tr=document.createElement('tr');
+      const tag = ({college:'学院',major:'专业',group:'课题组'})[u.unit_type]||u.unit_type;
+      tr.innerHTML = `<td>${u.id}</td><td>${esc(u.name)}</td><td>${tag}</td><td>${u.parent_id||'—'}</td><td>${u.members}</td><td>${u.calls}</td><td>${u.tokens}</td>`; orb.appendChild(tr); });
+    const audit = await api('/api/v1/admin/audit?limit=30'); const aub=document.getElementById('audit-rows'); aub.innerHTML='';
+    audit.forEach(a=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${esc((a.created_at||'').replace('T',' ').slice(0,19))}</td><td>${esc(a.actor_username)}</td><td><code>${esc(a.action)}</code></td><td>${esc((a.target_type||'')+' '+(a.target_id||''))}</td><td>${esc(a.detail||'')}</td>`; aub.appendChild(tr); });
   }catch(e){ toast(e.message); }
+}
+async function setBudget(){
+  const v = parseInt(document.getElementById('budget-limit').value, 10);
+  if (!v || v<=0){ toast('请输入有效的预算上限'); return; }
+  try{ await api('/api/v1/admin/budget', {method:'POST', body: JSON.stringify({limit_points:v})}); toast('预算已设置'); loadAdmin(); }catch(e){ toast(e.message); }
+}
+async function resetBudget(){
+  try{ await api('/api/v1/admin/budget/reset', {method:'POST'}); toast('用量已重置'); loadAdmin(); }catch(e){ toast(e.message); }
 }
 async function grant(id){
   try{ await api('/api/v1/admin/users/'+id+'/grant', {method:'POST', body: JSON.stringify({bucket:'subsidy', points:1000})}); toast('已发放 1000 补贴点'); }catch(e){ toast(e.message); }

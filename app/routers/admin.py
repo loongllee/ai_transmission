@@ -11,16 +11,20 @@ from datetime import datetime
 
 from sqlalchemy import func
 
-from .. import store
+from .. import __version__, governance, org, store
+from ..config import settings
 from ..database import get_db
 from ..deps import require_admin
 from ..models import (
     Alert,
     ApiKeyPool,
+    AuditLog,
     BillingRecord,
+    Budget,
     ContributedApiKey,
     Job,
     Model,
+    OrgUnit,
     Order,
     Package,
     ResearchGroup,
@@ -32,6 +36,10 @@ from ..models import (
 from ..schemas import (
     AddMemberRequest,
     AlertOut,
+    AssignOrgRequest,
+    AuditOut,
+    BudgetOut,
+    BudgetSetRequest,
     CompensationOut,
     ContributionOut,
     GrantPointsRequest,
@@ -44,6 +52,9 @@ from ..schemas import (
     ModelIn,
     ModelOut,
     OrderOut,
+    OrgRollupOut,
+    OrgUnitIn,
+    OrgUnitOut,
     PackageIn,
     PackageOut,
     UpdateUserRequest,
@@ -193,12 +204,13 @@ def list_logs(
 
 # ---------- Token 封禁（异常 API 调用封禁，方案第二十节）----------
 @router.post("/tokens/{token_id}/disable", response_model=dict)
-def admin_disable_token(token_id: int, db: Session = Depends(get_db)):
+def admin_disable_token(token_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     token = db.get(UserApiToken, token_id)
     if not token:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token 不存在")
     token.status = "disabled"
     db.commit()
+    governance.audit(db, admin, "token.disable", "api_token", token_id)
     return {"ok": True, "token_id": token_id, "status": "disabled"}
 
 
@@ -339,11 +351,13 @@ def admin_confirm_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/orders/{order_id}/refund", response_model=OrderOut)
-def admin_refund_order(order_id: int, db: Session = Depends(get_db)):
+def admin_refund_order(order_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     order = db.get(Order, order_id)
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "订单不存在")
-    return store.refund_order(db, order)
+    result = store.refund_order(db, order)
+    governance.audit(db, admin, "order.refund", "order", order_id, f"amount={order.amount}")
+    return result
 
 
 # ---------- 付费意愿统计（方案 11.3，匿名化汇总）----------
@@ -380,6 +394,86 @@ def admin_compensation(db: Session = Depends(get_db)):
     return store.compensation_stats(db)
 
 
+# ======================= 第四阶段：学校级治理 =======================
+
+# ---------- 多级组织管理（学院/专业/课题组）----------
+@router.get("/org/units", response_model=List[OrgUnitOut])
+def list_org_units(db: Session = Depends(get_db)):
+    return org.list_units(db)
+
+
+@router.post("/org/units", response_model=OrgUnitOut, status_code=status.HTTP_201_CREATED)
+def create_org_unit(payload: OrgUnitIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    unit = org.create_unit(db, payload.name, payload.unit_type, payload.parent_id, payload.code)
+    governance.audit(db, admin, "org.create", "org_unit", unit.id, f"{payload.unit_type}:{payload.name}")
+    return unit
+
+
+@router.post("/org/assign", response_model=dict)
+def assign_org(payload: AssignOrgRequest, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.get(User, payload.user_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
+    org.set_membership(db, payload.user_id, payload.org_unit_id)
+    governance.audit(db, admin, "org.assign", "user", payload.user_id, f"-> unit {payload.org_unit_id}")
+    return {"ok": True, "user_id": payload.user_id, "org_unit_id": payload.org_unit_id}
+
+
+# ---------- 学校级预算熔断 ----------
+@router.get("/budget", response_model=Optional[BudgetOut])
+def get_budget(db: Session = Depends(get_db)):
+    return governance.get_active_school_budget(db)
+
+
+@router.post("/budget", response_model=BudgetOut)
+def set_budget(payload: BudgetSetRequest, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    b = governance.set_school_budget(db, payload.limit_points, payload.period_key, payload.note)
+    governance.audit(db, admin, "budget.set", "budget", b.id, f"limit={payload.limit_points}")
+    return b
+
+
+@router.post("/budget/reset", response_model=Optional[BudgetOut])
+def reset_budget(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    b = governance.get_active_school_budget(db)
+    if not b:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "无活动预算")
+    governance.reset_budget(db, b)
+    governance.audit(db, admin, "budget.reset", "budget", b.id)
+    return b
+
+
+# ---------- 学校级统计报表 ----------
+@router.get("/reports/overview", response_model=dict)
+def report_overview(days: Optional[int] = None, db: Session = Depends(get_db)):
+    return governance.overview(db, days)
+
+
+@router.get("/reports/by-org", response_model=List[OrgRollupOut])
+def report_by_org(db: Session = Depends(get_db)):
+    return governance.by_org(db)
+
+
+# ---------- 操作审计 ----------
+@router.get("/audit", response_model=List[AuditOut])
+def list_audit(limit: int = 200, db: Session = Depends(get_db)):
+    return governance.list_audit(db, limit)
+
+
+# ---------- 系统运维信息 ----------
+@router.get("/system", response_model=dict)
+def system_info(db: Session = Depends(get_db)):
+    budget = governance.get_active_school_budget(db)
+    return {
+        "version": __version__,
+        "environment": settings.environment,
+        "sso_enabled": settings.sso_enabled,
+        "sso_mode": settings.sso_mode,
+        "worker_inprocess": settings.run_inprocess_worker,
+        "org_units": db.query(OrgUnit).count(),
+        "audit_records": db.query(AuditLog).count(),
+        "budget_status": budget.status if budget else "none",
+    }
+
+
 # ---------- 简单统计 ----------
 @router.get("/stats", response_model=dict)
 def stats(db: Session = Depends(get_db)):
@@ -392,4 +486,5 @@ def stats(db: Session = Depends(get_db)):
         "groups": db.query(ResearchGroup).count(),
         "paid_orders": db.query(Order).filter(Order.status == "paid").count(),
         "contributions": db.query(ContributedApiKey).filter(ContributedApiKey.status == "active").count(),
+        "org_units": db.query(OrgUnit).count(),
     }

@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     pilot_subsidy_per_contributor: float = 5.0     # 参与试点补贴(元/人，方案 9.3)
     consent_version: str = "v1.0"                  # 当前电子授权版本号
 
+    # ---- 第四阶段：学校统一身份认证（SSO）----
+    sso_enabled: bool = True
+    sso_provider_name: str = "school-sso"
+    sso_mode: str = "mock"                         # mock | oidc
+    sso_default_role: str = "student"
+    sso_code_ttl_seconds: int = 300
+    # OIDC 模式（接入真实学校 IdP 时填写）
+    sso_client_id: str = ""
+    sso_client_secret: str = ""
+    sso_authorize_url: str = ""
+    sso_token_url: str = ""
+    sso_userinfo_url: str = ""
+    sso_redirect_uri: str = "http://localhost:8000/sso/callback"
+
     # CORS
     cors_origins: str = "*"
 

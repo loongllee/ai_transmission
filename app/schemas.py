@@ -405,3 +405,90 @@ class CompensationOut(BaseModel):
     total_cost: float
     pilot_subsidy: float
     suggested_compensation: float
+
+
+# ---------- 第四阶段：组织 / 预算 / 审计 / SSO ----------
+class OrgUnitIn(BaseModel):
+    name: str
+    unit_type: str  # college / major / group
+    parent_id: Optional[int] = None
+    code: Optional[str] = None
+
+
+class OrgUnitOut(BaseModel):
+    model_config = _CFG
+    id: int
+    name: str
+    unit_type: str
+    parent_id: Optional[int] = None
+    code: Optional[str] = None
+    status: str
+
+
+class AssignOrgRequest(BaseModel):
+    user_id: int
+    org_unit_id: int
+
+
+class OrgRollupOut(BaseModel):
+    id: int
+    name: str
+    unit_type: str
+    parent_id: Optional[int] = None
+    members: int
+    calls: int
+    tokens: int
+
+
+class BudgetSetRequest(BaseModel):
+    limit_points: int
+    period_key: Optional[str] = None
+    note: Optional[str] = None
+
+
+class BudgetOut(BaseModel):
+    model_config = _CFG
+    id: int
+    scope: str
+    org_unit_id: Optional[int] = None
+    period_key: Optional[str] = None
+    limit_points: int
+    used_points: int
+    status: str
+    note: Optional[str] = None
+
+
+class AuditOut(BaseModel):
+    model_config = _CFG
+    id: int
+    actor_user_id: Optional[int] = None
+    actor_username: Optional[str] = None
+    action: str
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    detail: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class SsoConfigOut(BaseModel):
+    enabled: bool
+    mode: str
+    provider: str
+
+
+class SsoMockLoginRequest(BaseModel):
+    username: str
+    role: Optional[str] = None
+    email: Optional[str] = None
+    college: Optional[str] = None
+    major: Optional[str] = None
+    group: Optional[str] = None
+
+
+class SsoCodeOut(BaseModel):
+    code: str
+
+
+class SsoCallbackRequest(BaseModel):
+    code: str
+    redirect_uri: Optional[str] = None

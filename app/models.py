@@ -322,3 +322,84 @@ class Order(Base):
     created_at = Column(DateTime, default=_now, index=True)
     paid_at = Column(DateTime)
     refunded_at = Column(DateTime)
+
+
+# ============================ 第四阶段：学校级扩展预留 ============================
+
+
+class OrgUnit(Base):
+    """组织单元：学院 / 专业 / 课题组（方案第四阶段多级管理）。
+
+    通过 parent_id 形成树：college → major → group。
+    """
+
+    __tablename__ = "org_units"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    unit_type = Column(String(20), nullable=False)  # college / major / group
+    parent_id = Column(BigInteger, index=True)
+    code = Column(String(80))
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime, default=_now)
+
+
+class OrgMembership(Base):
+    """用户所属组织单元（一人一个叶子单元，祖先通过 parent_id 推导）。"""
+
+    __tablename__ = "org_memberships"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    org_unit_id = Column(BigInteger, index=True)
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class Budget(Base):
+    """预算与熔断（方案第四阶段学校级预算熔断 / 第二十节费用失控应对）。
+
+    scope=school 为全局学校预算；scope=org 绑定某 org_unit。used_points 达到
+    limit_points 时 status 置 tripped，平台拒绝新的调用直至管理员调整或重置。
+    """
+
+    __tablename__ = "budgets"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    scope = Column(String(20), nullable=False, default="school")  # school / org
+    org_unit_id = Column(BigInteger)
+    period_key = Column(String(20))  # 如 2026-06（预留按月滚动）
+    limit_points = Column(BigInteger, nullable=False, default=0)
+    used_points = Column(BigInteger, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="active")  # active / tripped / disabled
+    note = Column(String(200))
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class AuditLog(Base):
+    """管理操作审计（方案第四阶段大规模日志审计 / 第十九节合规）。"""
+
+    __tablename__ = "audit_logs"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    actor_user_id = Column(BigInteger, index=True)
+    actor_username = Column(String(100))
+    action = Column(String(80), nullable=False)
+    target_type = Column(String(50))
+    target_id = Column(String(80))
+    detail = Column(Text)
+    created_at = Column(DateTime, default=_now, index=True)
+
+
+class SsoIdentity(Base):
+    """学校统一身份认证身份映射（方案第四阶段统一身份认证）。"""
+
+    __tablename__ = "sso_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_sso_provider_subject"),)
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    provider = Column(String(50), nullable=False)
+    subject = Column(String(120), nullable=False)  # IdP 中的唯一标识 sub
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=_now)
