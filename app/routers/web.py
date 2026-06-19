@@ -20,12 +20,14 @@ from ..models import (
     Order,
     Package,
     SharedAccount,
+    SharedCall,
     User,
     UserApiToken,
     UsageLog,
     WalletAccount,
 )
 from ..schemas import (
+    AddSharedMemberRequest,
     ApiTokenCreatedOut,
     ApiTokenOut,
     ChatRequest,
@@ -33,9 +35,8 @@ from ..schemas import (
     ContributionIn,
     ContributionOut,
     CreateOrderRequest,
-    CreateTokenRequest,
-    AddSharedMemberRequest,
     CreateSharedRequest,
+    CreateTokenRequest,
     JobCreateRequest,
     JobOut,
     JobResultOut,
@@ -43,9 +44,12 @@ from ..schemas import (
     PackageOut,
     PayOrderRequest,
     QuotaOut,
-    SharedAccountCreatedOut,
     SharedAccountOut,
+    SharedCallOut,
+    SharedMemberCreatedOut,
     SharedMemberOut,
+    UpdateSharedAccountRequest,
+    UpdateSharedMemberRequest,
     UsageLogOut,
     UserOut,
     WalletOut,
@@ -318,15 +322,20 @@ def list_shared(user: User = Depends(get_current_user), db: Session = Depends(ge
     )
 
 
-@router.post("/shared", response_model=SharedAccountCreatedOut, status_code=status.HTTP_201_CREATED)
+@router.post("/shared", response_model=SharedAccountOut, status_code=status.HTTP_201_CREATED)
 def create_shared(payload: CreateSharedRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    acct, plaintext = shared_service.create_account(
+    return shared_service.create_account(
         db, user, payload.name,
         payload.rate_limit_per_minute, payload.max_concurrency, payload.daily_request_limit,
         payload.model_scope, payload.restrict_members,
+        payload.daily_token_limit, payload.default_member_rpm, payload.default_member_daily,
     )
-    base = SharedAccountOut.model_validate(acct)
-    return SharedAccountCreatedOut(**base.model_dump(), plaintext_token=plaintext)
+
+
+@router.patch("/shared/{account_id}", response_model=SharedAccountOut)
+def update_shared(account_id: int, payload: UpdateSharedAccountRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    return shared_service.update_account(db, acct, payload.model_dump(exclude_unset=True))
 
 
 @router.get("/shared/{account_id}/members", response_model=List[SharedMemberOut])
@@ -335,7 +344,7 @@ def list_shared_members(account_id: int, user: User = Depends(get_current_user),
     return shared_service.list_members(db, acct)
 
 
-@router.post("/shared/{account_id}/members", response_model=SharedMemberOut, status_code=status.HTTP_201_CREATED)
+@router.post("/shared/{account_id}/members", response_model=SharedMemberCreatedOut, status_code=status.HTTP_201_CREATED)
 def add_shared_member(
     account_id: int,
     payload: AddSharedMemberRequest,
@@ -343,10 +352,57 @@ def add_shared_member(
     db: Session = Depends(get_db),
 ):
     acct = shared_service.owned_account(db, user.id, account_id)
-    return shared_service.add_member(db, acct, payload.member_label)
+    member, plaintext = shared_service.add_member(
+        db, acct, payload.member_label,
+        display_name=payload.display_name, rpm_limit=payload.rpm_limit,
+        daily_request_limit=payload.daily_request_limit, token_limit=payload.token_limit,
+        model_scope=payload.model_scope,
+    )
+    base = SharedMemberOut.model_validate(member)
+    return SharedMemberCreatedOut(**base.model_dump(), plaintext_token=plaintext)
 
 
-@router.post("/shared/{account_id}/members/{label}/disable", response_model=SharedMemberOut)
-def disable_shared_member(account_id: int, label: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.patch("/shared/{account_id}/members/{label}", response_model=SharedMemberOut)
+def update_shared_member(
+    account_id: int, label: str, payload: UpdateSharedMemberRequest,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
     acct = shared_service.owned_account(db, user.id, account_id)
-    return shared_service.set_member_status(db, acct, label, "disabled")
+    return shared_service.update_member(db, acct, label, payload.model_dump(exclude_unset=True))
+
+
+@router.post("/shared/{account_id}/members/{label}/token", response_model=SharedMemberCreatedOut)
+def rotate_shared_member_token(account_id: int, label: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    member = shared_service._member_by_label(db, acct, label)
+    member, plaintext = shared_service.rotate_member_token(db, member)
+    base = SharedMemberOut.model_validate(member)
+    return SharedMemberCreatedOut(**base.model_dump(), plaintext_token=plaintext)
+
+
+# 拥有者可查看成员数据（含对话原文）——请在产品隐私政策中向成员明示
+@router.get("/shared/{account_id}/members/{label}/history", response_model=List[SharedCallOut])
+def member_history_for_owner(account_id: int, label: str, limit: int = 100, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    member = shared_service._member_by_label(db, acct, label)
+    limit = max(1, min(limit, 500))
+    return (
+        db.query(SharedCall)
+        .filter(SharedCall.shared_account_id == acct.id, SharedCall.member_id == member.id)
+        .order_by(SharedCall.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/shared/{account_id}/history", response_model=List[SharedCallOut])
+def account_history_for_owner(account_id: int, limit: int = 200, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    limit = max(1, min(limit, 1000))
+    return (
+        db.query(SharedCall)
+        .filter(SharedCall.shared_account_id == acct.id)
+        .order_by(SharedCall.id.desc())
+        .limit(limit)
+        .all()
+    )

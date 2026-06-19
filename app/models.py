@@ -422,17 +422,22 @@ class SharedAccount(Base):
     owner_user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
     token_hash = Column(String(255), nullable=False, unique=True, index=True)
     token_prefix = Column(String(40))
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)  # 账户内部标识（成员用各自的 member-token）
+    token_prefix = Column(String(40))
     model_scope = Column(String(50), default="basic")
     rate_limit_per_minute = Column(Integer, default=60)   # 聚合每分钟请求上限
     max_concurrency = Column(Integer, default=5)          # 最大并发在途请求（0=不限）
     daily_request_limit = Column(Integer, default=5000)   # 聚合每日请求上限
-    restrict_members = Column(Boolean, default=False)     # True 则仅允许 allowlist 成员
+    daily_token_limit = Column(BigInteger)                # 聚合每日 token 上限（可空=不限）
+    default_member_rpm = Column(Integer)                  # 新成员默认每分钟上限
+    default_member_daily = Column(Integer)                # 新成员默认每日次数上限
+    restrict_members = Column(Boolean, default=False)     # 预留：是否仅允许已登记成员
     status = Column(String(30), nullable=False, default="active")
     created_at = Column(DateTime, default=_now)
 
 
 class SharedMember(Base):
-    """共享账户成员：既是（可选的）白名单，也承载每成员用量统计。"""
+    """共享账户成员：每人持有独立 member-token，承载每成员限额、偏好与用量统计。"""
 
     __tablename__ = "shared_members"
     __table_args__ = (UniqueConstraint("shared_account_id", "member_label", name="uq_shared_member"),)
@@ -440,11 +445,27 @@ class SharedMember(Base):
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     shared_account_id = Column(BigInteger, ForeignKey("shared_accounts.id"), nullable=False, index=True)
     member_label = Column(String(120), nullable=False)  # 成员标识（用户名/邮箱/设备号等）
+    token_hash = Column(String(255), unique=True, index=True)  # 该成员独立凭据的哈希
+    token_prefix = Column(String(40))
     status = Column(String(30), nullable=False, default="active")  # active / disabled
+    # —— 拥有者为该成员设置的限额/权限（None 则回退账户默认）——
+    rpm_limit = Column(Integer)
+    daily_request_limit = Column(Integer)
+    token_limit = Column(BigInteger)        # 该成员累计 token 上限
+    model_scope = Column(String(50))        # 该成员最高模型等级（≤账户）
+    expires_at = Column(DateTime)
+    note = Column(String(200))
+    # —— 成员自助偏好 ——
+    display_name = Column(String(120))
+    default_model_level = Column(String(50))
+    default_max_tokens = Column(Integer)
+    default_temperature = Column(Numeric(4, 2))
+    # —— 用量统计 ——
     request_count = Column(BigInteger, default=0)
     token_count = Column(BigInteger, default=0)
     last_used_at = Column(DateTime)
     created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
 class SharedCall(Base):

@@ -502,7 +502,23 @@ class CreateSharedRequest(BaseModel):
     rate_limit_per_minute: int = 60     # 聚合每分钟上限
     max_concurrency: int = 5            # 最大并发在途请求（0=不限）
     daily_request_limit: int = 5000     # 聚合每日上限
-    restrict_members: bool = False      # True 则仅白名单成员可用
+    daily_token_limit: Optional[int] = None
+    default_member_rpm: Optional[int] = None      # 新成员默认每分钟上限
+    default_member_daily: Optional[int] = None    # 新成员默认每日次数上限
+    restrict_members: bool = False
+
+
+class UpdateSharedAccountRequest(BaseModel):
+    model_config = _CFG
+    name: Optional[str] = None
+    status: Optional[str] = None
+    model_scope: Optional[str] = None
+    rate_limit_per_minute: Optional[int] = None
+    max_concurrency: Optional[int] = None
+    daily_request_limit: Optional[int] = None
+    daily_token_limit: Optional[int] = None
+    default_member_rpm: Optional[int] = None
+    default_member_daily: Optional[int] = None
 
 
 class SharedAccountOut(BaseModel):
@@ -513,28 +529,69 @@ class SharedAccountOut(BaseModel):
     rate_limit_per_minute: int
     max_concurrency: int
     daily_request_limit: int
-    restrict_members: bool
+    daily_token_limit: Optional[int] = None
+    default_member_rpm: Optional[int] = None
+    default_member_daily: Optional[int] = None
     status: str
-    token_prefix: Optional[str] = None
     created_at: Optional[datetime] = None
-
-
-class SharedAccountCreatedOut(SharedAccountOut):
-    plaintext_token: str  # 仅创建时返回一次
 
 
 class SharedMemberOut(BaseModel):
     model_config = _CFG
     id: int
     member_label: str
+    display_name: Optional[str] = None
     status: str
+    token_prefix: Optional[str] = None
+    rpm_limit: Optional[int] = None
+    daily_request_limit: Optional[int] = None
+    token_limit: Optional[int] = None
+    model_scope: Optional[str] = None
+    note: Optional[str] = None
+    expires_at: Optional[datetime] = None
     request_count: int
     token_count: int
     last_used_at: Optional[datetime] = None
 
 
+class SharedMemberCreatedOut(SharedMemberOut):
+    plaintext_token: str  # member-token，仅签发/重置时返回一次
+
+
 class AddSharedMemberRequest(BaseModel):
     member_label: str
+    display_name: Optional[str] = None
+    rpm_limit: Optional[int] = None
+    daily_request_limit: Optional[int] = None
+    token_limit: Optional[int] = None
+    model_scope: Optional[str] = None
+
+
+class UpdateSharedMemberRequest(BaseModel):
+    display_name: Optional[str] = None
+    status: Optional[str] = None
+    rpm_limit: Optional[int] = None
+    daily_request_limit: Optional[int] = None
+    token_limit: Optional[int] = None
+    model_scope: Optional[str] = None
+    note: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class MemberSettingsOut(BaseModel):
+    model_config = _CFG
+    member_label: str
+    display_name: Optional[str] = None
+    default_model_level: Optional[str] = None
+    default_max_tokens: Optional[int] = None
+    default_temperature: Optional[float] = None
+
+
+class UpdateMemberSettingsRequest(BaseModel):
+    display_name: Optional[str] = None
+    default_model_level: Optional[str] = None
+    default_max_tokens: Optional[int] = None
+    default_temperature: Optional[float] = None
 
 
 class SharedCallOut(BaseModel):

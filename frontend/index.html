@@ -101,6 +101,7 @@
       <button data-view="jobs" onclick="show('jobs')">批量任务</button>
       <button data-view="store" onclick="show('store')">充值套餐</button>
       <button data-view="contrib" onclick="show('contrib')">贡献账号</button>
+      <button data-view="shared" onclick="show('shared')">共享账户</button>
       <button data-view="docs" onclick="show('docs')">API 文档</button>
       <button data-view="admin" id="nav-admin" class="hidden" onclick="show('admin')">管理后台</button>
     </nav>
@@ -268,6 +269,70 @@
           <thead><tr><th>ID</th><th>供应商</th><th>等级</th><th>今日消耗</th><th>本月消耗</th><th>状态</th><th>操作</th></tr></thead>
           <tbody id="contrib-rows"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Shared accounts -->
+    <section id="view-shared" class="hidden">
+      <div class="card">
+        <h3 style="margin-top:0">共享账户（拥有者）</h3>
+        <p class="muted" style="font-size:12px">一个账户多人共用,按聚合速率/并发上限约束;每名成员持独立凭据,只看自己的历史。</p>
+        <div class="row">
+          <div style="flex:2"><label>账户名称</label><input id="sa-name" placeholder="团队/产品名" /></div>
+          <div style="flex:1"><label>每分钟(聚合)</label><input id="sa-rpm" type="number" value="60" /></div>
+          <div style="flex:1"><label>并发上限</label><input id="sa-conc" type="number" value="5" /></div>
+          <div style="flex:1"><label>每日(聚合)</label><input id="sa-daily" type="number" value="5000" /></div>
+          <div style="flex:1"><label>模型等级</label><select id="sa-scope"><option value="basic">基础</option><option value="standard">标准</option><option value="advanced">高级</option></select></div>
+        </div>
+        <div style="margin-top:12px"><button onclick="createShared()">+ 新建共享账户</button></div>
+        <table style="margin-top:12px">
+          <thead><tr><th>ID</th><th>名称</th><th>等级</th><th>每分钟</th><th>并发</th><th>每日</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="sa-rows"></tbody>
+        </table>
+      </div>
+      <div id="sa-detail" class="card hidden">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">成员管理 · <span id="sa-detail-name"></span></h3>
+          <button class="ghost" onclick="loadAccountHistory()">查看全账户对话</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div style="flex:2"><label>成员标识</label><input id="sm-label" placeholder="用户名/邮箱/设备号" /></div>
+          <div style="flex:1"><label>该成员每分钟</label><input id="sm-rpm" type="number" placeholder="留空=账户默认" /></div>
+          <div style="flex:1"><label>该成员每日</label><input id="sm-daily" type="number" placeholder="留空=账户默认" /></div>
+        </div>
+        <div style="margin-top:10px"><button onclick="addMember()">+ 签发成员凭据</button></div>
+        <div id="sm-newtoken" class="hidden" style="margin-top:10px">
+          <label>新成员 member-token（仅显示一次）</label>
+          <div class="tokenbox" id="sm-newtoken-val"></div>
+        </div>
+        <table style="margin-top:12px">
+          <thead><tr><th>成员</th><th>状态</th><th>每分钟</th><th>每日</th><th>次数</th><th>Token</th><th>操作</th></tr></thead>
+          <tbody id="sm-rows"></tbody>
+        </table>
+        <div id="sa-history" class="hidden" style="margin-top:14px">
+          <h4 id="sa-history-title"></h4>
+          <table><thead><tr><th>成员</th><th>提问</th><th>回复</th><th>时间</th></tr></thead><tbody id="sa-history-rows"></tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">成员自助（用 member-token）</h3>
+        <p class="muted" style="font-size:12px">成员粘贴自己的 member-token,查看/管理自己的设置与历史(无需平台账号登录)。</p>
+        <label>member-token</label>
+        <div class="row"><input id="mb-token" placeholder="sk-relay-…" style="flex:1" /><button onclick="memberLoad()">加载</button></div>
+        <div id="mb-panel" class="hidden" style="margin-top:12px">
+          <div id="mb-me" class="muted" style="margin-bottom:10px"></div>
+          <div class="row">
+            <div style="flex:1"><label>昵称</label><input id="mb-name" /></div>
+            <div style="flex:1"><label>默认等级</label><input id="mb-level" placeholder="basic" /></div>
+            <div style="flex:1"><label>默认 max_tokens</label><input id="mb-maxtok" type="number" /></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button onclick="memberSaveSettings()">保存设置</button>
+            <button class="ghost" onclick="memberResetToken()">重置我的 Token</button>
+            <button class="danger" onclick="memberClearHistory()">清空我的历史</button>
+          </div>
+          <table style="margin-top:12px"><thead><tr><th>提问</th><th>回复</th><th>时间</th><th>操作</th></tr></thead><tbody id="mb-history"></tbody></table>
+        </div>
       </div>
     </section>
 
@@ -449,7 +514,7 @@ function logout(){ TOKEN=''; localStorage.removeItem('relay_jwt'); ME=null;
 
 /* ---------- 视图切换 ---------- */
 function show(view){
-  ['chat','wallet','tokens','usage','jobs','store','contrib','docs','admin'].forEach(v=>{
+  ['chat','wallet','tokens','usage','jobs','store','contrib','shared','docs','admin'].forEach(v=>{
     document.getElementById('view-'+v).classList.toggle('hidden', v!==view);
   });
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
@@ -459,6 +524,7 @@ function show(view){
   if (view==='jobs') initJobs();
   if (view==='store') loadStore();
   if (view==='contrib') loadContrib();
+  if (view==='shared') loadShared();
   if (view==='docs') renderDocs();
   if (view==='admin') loadAdmin();
 }
@@ -691,6 +757,140 @@ async function submitContribution(){
 async function revokeContribution(id){
   try{ await api('/api/web/contributions/'+id+'/revoke', {method:'POST'}); toast('已撤回'); loadContrib(); }
   catch(e){ toast(e.message); }
+}
+
+/* ---------- 共享账户（拥有者侧，用平台 JWT）---------- */
+let curSharedAcct = null;
+async function loadShared(){
+  try{
+    const rows = await api('/api/web/shared'); const tb=document.getElementById('sa-rows'); tb.innerHTML='';
+    rows.forEach(a=>{ const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${a.id}</td><td>${esc(a.name)}</td><td>${esc(a.model_scope)}</td><td>${a.rate_limit_per_minute}</td>
+        <td>${a.max_concurrency}</td><td>${a.daily_request_limit}</td><td>${esc(a.status)}</td>
+        <td><button class="ghost" onclick="openAccount(${a.id}, '${esc(a.name)}')">管理成员</button></td>`; tb.appendChild(tr); });
+  }catch(e){ toast(e.message); }
+}
+async function createShared(){
+  const name = document.getElementById('sa-name').value.trim();
+  if(!name){ toast('请填写账户名称'); return; }
+  try{
+    await api('/api/web/shared', {method:'POST', body: JSON.stringify({
+      name, rate_limit_per_minute:+document.getElementById('sa-rpm').value||60,
+      max_concurrency:+document.getElementById('sa-conc').value||5,
+      daily_request_limit:+document.getElementById('sa-daily').value||5000,
+      model_scope: document.getElementById('sa-scope').value})});
+    document.getElementById('sa-name').value=''; toast('已创建'); loadShared();
+  }catch(e){ toast(e.message); }
+}
+async function openAccount(id, name){
+  curSharedAcct = id;
+  document.getElementById('sa-detail').classList.remove('hidden');
+  document.getElementById('sa-detail-name').textContent = name+' (#'+id+')';
+  document.getElementById('sa-history').classList.add('hidden');
+  await loadMembers(id);
+}
+async function loadMembers(id){
+  const rows = await api('/api/web/shared/'+id+'/members'); const tb=document.getElementById('sm-rows'); tb.innerHTML='';
+  rows.forEach(m=>{ const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${esc(m.display_name||m.member_label)}</td><td>${esc(m.status)}</td>
+      <td>${m.rpm_limit??'默认'}</td><td>${m.daily_request_limit??'默认'}</td><td>${m.request_count}</td>
+      <td><code>${esc(m.token_prefix||'')}</code></td>
+      <td class="row">
+        <button class="ghost" onclick="setMemberRpm(${id},'${esc(m.member_label)}')">限速</button>
+        <button class="ghost" onclick="rotateMember(${id},'${esc(m.member_label)}')">换证</button>
+        <button class="ghost" onclick="memberHistoryOwner(${id},'${esc(m.member_label)}')">看对话</button>
+        <button class="danger" onclick="disableMember(${id},'${esc(m.member_label)}')">禁用</button>
+      </td>`; tb.appendChild(tr); });
+}
+async function addMember(){
+  const label = document.getElementById('sm-label').value.trim();
+  if(!label){ toast('请填写成员标识'); return; }
+  const body = {member_label: label};
+  const rpm = +document.getElementById('sm-rpm').value; if(rpm) body.rpm_limit=rpm;
+  const daily = +document.getElementById('sm-daily').value; if(daily) body.daily_request_limit=daily;
+  try{
+    const d = await api('/api/web/shared/'+curSharedAcct+'/members', {method:'POST', body: JSON.stringify(body)});
+    document.getElementById('sm-newtoken').classList.remove('hidden');
+    document.getElementById('sm-newtoken-val').textContent = d.plaintext_token;
+    document.getElementById('sm-label').value='';
+    loadMembers(curSharedAcct);
+  }catch(e){ toast(e.message); }
+}
+async function setMemberRpm(id, label){
+  const v = prompt('该成员每分钟上限（留空=账户默认）', '');
+  try{ await api('/api/web/shared/'+id+'/members/'+encodeURIComponent(label), {method:'PATCH', body: JSON.stringify({rpm_limit: v? +v: null})}); loadMembers(id); }
+  catch(e){ toast(e.message); }
+}
+async function rotateMember(id, label){
+  try{ const d = await api('/api/web/shared/'+id+'/members/'+encodeURIComponent(label)+'/token', {method:'POST'});
+    document.getElementById('sm-newtoken').classList.remove('hidden');
+    document.getElementById('sm-newtoken-val').textContent = d.plaintext_token; loadMembers(id); }
+  catch(e){ toast(e.message); }
+}
+async function disableMember(id, label){
+  try{ await api('/api/web/shared/'+id+'/members/'+encodeURIComponent(label), {method:'PATCH', body: JSON.stringify({status:'disabled'})}); loadMembers(id); }
+  catch(e){ toast(e.message); }
+}
+async function memberHistoryOwner(id, label){
+  try{ const rows = await api('/api/web/shared/'+id+'/members/'+encodeURIComponent(label)+'/history'); renderSharedHistory('成员 '+label+' 的对话', rows); }
+  catch(e){ toast(e.message); }
+}
+async function loadAccountHistory(){
+  try{ const rows = await api('/api/web/shared/'+curSharedAcct+'/history'); renderSharedHistory('全账户对话', rows); }
+  catch(e){ toast(e.message); }
+}
+function renderSharedHistory(title, rows){
+  document.getElementById('sa-history').classList.remove('hidden');
+  document.getElementById('sa-history-title').textContent = title+'（'+rows.length+' 条）';
+  const tb=document.getElementById('sa-history-rows'); tb.innerHTML='';
+  rows.forEach(h=>{ const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${esc(h.member_label)}</td><td style="white-space:pre-wrap">${esc(h.prompt||'')}</td>
+      <td style="white-space:pre-wrap">${esc((h.response||'').slice(0,200))}</td><td>${esc((h.created_at||'').replace('T',' ').slice(0,19))}</td>`; tb.appendChild(tr); });
+}
+
+/* ---------- 成员自助（用 member-token，独立于平台 JWT）---------- */
+async function memberApi(path, opts={}){
+  const tok = document.getElementById('mb-token').value.trim();
+  opts.headers = Object.assign({'Content-Type':'application/json','Authorization':'Bearer '+tok}, opts.headers||{});
+  const r = await fetch(path, opts); let d=null; try{ d=await r.json(); }catch(e){}
+  if(!r.ok){ throw new Error((d&&d.detail)||('请求失败 '+r.status)); }
+  return d;
+}
+async function memberLoad(){
+  try{
+    const me = await memberApi('/api/v1/shared/me');
+    document.getElementById('mb-panel').classList.remove('hidden');
+    document.getElementById('mb-me').textContent = `账户 ${me.account} · 成员 ${me.member} · 等级 ${me.effective_model_scope} · 我的每分钟 ${me.my_rate_limit_per_minute} · 已用 ${me.my_request_count} 次`;
+    const s = await memberApi('/api/v1/shared/me/settings');
+    document.getElementById('mb-name').value = s.display_name||'';
+    document.getElementById('mb-level').value = s.default_model_level||'';
+    document.getElementById('mb-maxtok').value = s.default_max_tokens||'';
+    await memberLoadHistory();
+  }catch(e){ toast(e.message); }
+}
+async function memberLoadHistory(){
+  const rows = await memberApi('/api/v1/shared/history'); const tb=document.getElementById('mb-history'); tb.innerHTML='';
+  rows.forEach(h=>{ const tr=document.createElement('tr');
+    tr.innerHTML = `<td style="white-space:pre-wrap">${esc(h.prompt||'')}</td><td style="white-space:pre-wrap">${esc((h.response||'').slice(0,200))}</td>
+      <td>${esc((h.created_at||'').replace('T',' ').slice(0,19))}</td><td><button class="danger" onclick="memberDeleteCall(${h.id})">删</button></td>`; tb.appendChild(tr); });
+}
+async function memberSaveSettings(){
+  try{ await memberApi('/api/v1/shared/me/settings', {method:'PATCH', body: JSON.stringify({
+    display_name: document.getElementById('mb-name').value||null,
+    default_model_level: document.getElementById('mb-level').value||null,
+    default_max_tokens: +document.getElementById('mb-maxtok').value||null})});
+    toast('已保存'); }catch(e){ toast(e.message); }
+}
+async function memberResetToken(){
+  try{ const d = await memberApi('/api/v1/shared/me/token/reset', {method:'POST'});
+    document.getElementById('mb-token').value = d.plaintext_token; toast('新 Token 已生成并填入上方'); }
+  catch(e){ toast(e.message); }
+}
+async function memberClearHistory(){
+  try{ await memberApi('/api/v1/shared/history', {method:'DELETE'}); toast('已清空'); memberLoadHistory(); }catch(e){ toast(e.message); }
+}
+async function memberDeleteCall(id){
+  try{ await memberApi('/api/v1/shared/history/'+id, {method:'DELETE'}); memberLoadHistory(); }catch(e){ toast(e.message); }
 }
 
 /* ---------- Docs ---------- */

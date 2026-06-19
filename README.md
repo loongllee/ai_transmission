@@ -226,35 +226,50 @@ for it in results["items"]:
 
 ---
 
-## 👥 共享账户（多人共用一个账户）
+## 👥 共享账户（多人共用一个账户，每成员独立凭据）
 
-适合「一个账户多人共用、按聚合速率/并发上限约束」的产品形态：拥有者建一个共享账户拿到一个共享 Token，多名成员用同一个 Token + 各自的 `X-Member-Id` 调用。**速率不超上限时允许多人并发使用**；**每名成员只能看到自己的历史，服务端按成员区分、互不混淆**。
+适合「一个账户多人共用、按聚合速率/并发上限约束」的产品形态。**两套设置、两条认证通道:**
+
+- **拥有者**(平台 JWT):建账户、设账户/成员限额、为每名成员签发**独立 member-token**、查看全部数据。
+- **成员**(自己的 member-token):调用、管自己的历史、改自己的偏好、重置自己的凭据。
+
+凭据即身份(不能冒充);速率不超上限时多人并发放行;每名成员只看到自己的历史。
 
 ```python
 import httpx
-TOKEN = "sk-relay-共享账户Token"            # 拥有者在 /api/web/shared 创建时获得
-H = lambda member: {"Authorization": f"Bearer {TOKEN}", "X-Member-Id": member}
-
-# 成员 alice 调用（计入账户聚合速率，计费归账户拥有者）
-httpx.post("http://localhost:8000/api/v1/shared/chat", headers=H("alice"),
+B = "http://localhost:8000"
+# 成员用自己的 member-token 调用(由拥有者签发，无需平台账号)
+H = {"Authorization": "Bearer sk-relay-成员自己的token"}
+httpx.post(f"{B}/api/v1/shared/chat", headers=H,
            json={"model_level": "basic", "messages": [{"role": "user", "content": "你好"}]})
-
-# alice 只会拉到自己的历史，看不到 bob 的对话
-httpx.get("http://localhost:8000/api/v1/shared/history", headers=H("alice")).json()
+httpx.get(f"{B}/api/v1/shared/history", headers=H).json()   # 只会拿到自己的历史
 ```
+
+**拥有者侧** `/api/web/shared*`(JWT)
 
 | 端点 | 说明 |
 |------|------|
-| POST `/api/web/shared` | 拥有者创建共享账户（设 `rate_limit_per_minute`/`max_concurrency`/`daily_request_limit`/`restrict_members`），**返回一次性 Token** |
-| GET `/api/web/shared/{id}/members` | 拥有者查看各成员用量 |
-| POST `/api/v1/shared/chat` | 成员调用（`X-Member-Id` 标识成员）|
-| GET `/api/v1/shared/history` | 成员拉取**自己**的历史对话（按成员隔离）|
-| GET `/api/v1/shared/me` | 成员查看账户限额与自己的用量 |
+| POST `/api/web/shared` | 建账户(聚合 `rate_limit_per_minute`/`max_concurrency`/`daily_request_limit` + 新成员默认配额) |
+| PATCH `/api/web/shared/{id}` | 改账户设置 |
+| POST `/api/web/shared/{id}/members` | 签发成员凭据(可设该成员 rpm/每日/token/等级)，**返回一次性 member-token** |
+| PATCH `/api/web/shared/{id}/members/{label}` | 改某成员限额/等级/状态 |
+| POST `/api/web/shared/{id}/members/{label}/token` | 轮换该成员凭据 |
+| GET `/api/web/shared/{id}/members/{label}/history` · `/history` | 查看某成员/全账户对话(含原文) |
 
-- **聚合速率/并发上限**：所有成员共用账户的每分钟速率、并发与每日次数预算；未超上限放行，超过返回 429。
-- **成员隔离**：每次调用按 `member_id` 落库（`shared_calls`），成员只能检索自己的记录，服务端据此区分不同对话。
-- **白名单**：`restrict_members=true` 时仅允许拥有者登记的成员；否则成员首次出现即自动登记。
-- 端到端演示：`python examples/shared_account_demo.py`（3 名成员并发共用、各自历史隔离）。
+**成员侧** `/api/v1/shared*`(member-token)
+
+| 端点 | 说明 |
+|------|------|
+| POST `/api/v1/shared/chat` | 调用(账户聚合 + 本成员限额两层校验) |
+| GET `/api/v1/shared/history` · DELETE `/history/{id}` · DELETE `/history` | 查/删/清空**自己**的历史 |
+| GET·PATCH `/api/v1/shared/me/settings` | 自己的偏好(昵称/默认等级/默认参数) |
+| POST `/api/v1/shared/me/token/reset` | 重置自己的凭据 |
+| GET `/api/v1/shared/me` | 自己的有效限额与用量 |
+
+- **两层限额**:账户聚合上限(全体共享) + 每成员单独上限(`null` 回退账户默认);任一超限返回 429。
+- **成员隔离**:每次调用按 `member_id` 落库(`shared_calls`),成员只能检索自己的记录。
+- **拥有者可见全部数据**(本项目按你的产品决定开放):可查看任一成员/全账户对话原文——请在产品**隐私政策中向成员明示并取得同意**。
+- 网页端「共享账户」页:拥有者管理 + 成员自助(粘贴 member-token)。端到端演示:`python examples/shared_account_demo.py`。
 
 > 计费与额度统一计入账户拥有者钱包。注意：保存对话内容用于「历史记录」属产品功能，请在你的隐私政策中明示，并仅向对应成员开放。
 
