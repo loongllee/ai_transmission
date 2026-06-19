@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, metrics, worker
 from .config import settings
 from .logging_config import configure_logging, logger
-from .routers import admin, auth, v1, web
+from .routers import admin, auth, shared, v1, web
 from .seed import init_db
 
 
@@ -70,6 +70,7 @@ async def access_log(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(web.router)
 app.include_router(v1.router)
+app.include_router(shared.router)
 app.include_router(admin.router)
 
 

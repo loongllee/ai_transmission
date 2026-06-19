@@ -226,6 +226,40 @@ for it in results["items"]:
 
 ---
 
+## 👥 共享账户（多人共用一个账户）
+
+适合「一个账户多人共用、按聚合速率/并发上限约束」的产品形态：拥有者建一个共享账户拿到一个共享 Token，多名成员用同一个 Token + 各自的 `X-Member-Id` 调用。**速率不超上限时允许多人并发使用**；**每名成员只能看到自己的历史，服务端按成员区分、互不混淆**。
+
+```python
+import httpx
+TOKEN = "sk-relay-共享账户Token"            # 拥有者在 /api/web/shared 创建时获得
+H = lambda member: {"Authorization": f"Bearer {TOKEN}", "X-Member-Id": member}
+
+# 成员 alice 调用（计入账户聚合速率，计费归账户拥有者）
+httpx.post("http://localhost:8000/api/v1/shared/chat", headers=H("alice"),
+           json={"model_level": "basic", "messages": [{"role": "user", "content": "你好"}]})
+
+# alice 只会拉到自己的历史，看不到 bob 的对话
+httpx.get("http://localhost:8000/api/v1/shared/history", headers=H("alice")).json()
+```
+
+| 端点 | 说明 |
+|------|------|
+| POST `/api/web/shared` | 拥有者创建共享账户（设 `rate_limit_per_minute`/`max_concurrency`/`daily_request_limit`/`restrict_members`），**返回一次性 Token** |
+| GET `/api/web/shared/{id}/members` | 拥有者查看各成员用量 |
+| POST `/api/v1/shared/chat` | 成员调用（`X-Member-Id` 标识成员）|
+| GET `/api/v1/shared/history` | 成员拉取**自己**的历史对话（按成员隔离）|
+| GET `/api/v1/shared/me` | 成员查看账户限额与自己的用量 |
+
+- **聚合速率/并发上限**：所有成员共用账户的每分钟速率、并发与每日次数预算；未超上限放行，超过返回 429。
+- **成员隔离**：每次调用按 `member_id` 落库（`shared_calls`），成员只能检索自己的记录，服务端据此区分不同对话。
+- **白名单**：`restrict_members=true` 时仅允许拥有者登记的成员；否则成员首次出现即自动登记。
+- 端到端演示：`python examples/shared_account_demo.py`（3 名成员并发共用、各自历史隔离）。
+
+> 计费与额度统一计入账户拥有者钱包。注意：保存对话内容用于「历史记录」属产品功能，请在你的隐私政策中明示，并仅向对应成员开放。
+
+---
+
 ## 🔌 接入真实大模型供应商
 
 平台支持任意 **OpenAI 兼容** 接口（OpenAI / DeepSeek / 通义千问 / 本地 vLLM 等）。
@@ -272,14 +306,16 @@ app/
   org.py         多级组织（学院/专业/课题组）与汇总
   governance.py  学校级预算熔断 / 操作审计 / 统计报表
   sso.py         学校统一身份认证（mock IdP / OIDC）
-  ratelimit.py   限流（进程内 + Redis 分布式，故障回退）
+  ratelimit.py   限流（进程内 + Redis 分布式 + 并发槽，故障回退）
   metrics.py     Prometheus 指标
   logging_config.py  结构化 JSON 日志
+  shared.py      共享账户（多人共用 + 成员隔离）服务
   seed.py        建表 + 初始管理员 + mock 模型/Key + 默认套餐
   routers/
     auth.py      注册/登录 + SSO
-    web.py       网页端（钱包/Token/用量/聊天/批量/充值/贡献）
+    web.py       网页端（钱包/Token/用量/聊天/批量/充值/贡献/共享账户管理）
     v1.py        科研 API（聊天/批量任务，方案第十三节）
+    shared.py    共享账户调用（成员侧：聊天/历史/me）
     admin.py     管理后台（用户/Key/课题组/告警/订单/补偿/组织/预算/审计/报表）
 frontend/
   index.html     自包含单页前端（聊天/钱包/Token/批量/充值/贡献/文档/管理 + SSO 登录）

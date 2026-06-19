@@ -492,3 +492,59 @@ class SsoCodeOut(BaseModel):
 class SsoCallbackRequest(BaseModel):
     code: str
     redirect_uri: Optional[str] = None
+
+
+# ---------- 共享账户（多人共用一个账户）----------
+class CreateSharedRequest(BaseModel):
+    model_config = _CFG
+    name: str
+    model_scope: str = "basic"
+    rate_limit_per_minute: int = 60     # 聚合每分钟上限
+    max_concurrency: int = 5            # 最大并发在途请求（0=不限）
+    daily_request_limit: int = 5000     # 聚合每日上限
+    restrict_members: bool = False      # True 则仅白名单成员可用
+
+
+class SharedAccountOut(BaseModel):
+    model_config = _CFG
+    id: int
+    name: str
+    model_scope: Optional[str] = None
+    rate_limit_per_minute: int
+    max_concurrency: int
+    daily_request_limit: int
+    restrict_members: bool
+    status: str
+    token_prefix: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class SharedAccountCreatedOut(SharedAccountOut):
+    plaintext_token: str  # 仅创建时返回一次
+
+
+class SharedMemberOut(BaseModel):
+    model_config = _CFG
+    id: int
+    member_label: str
+    status: str
+    request_count: int
+    token_count: int
+    last_used_at: Optional[datetime] = None
+
+
+class AddSharedMemberRequest(BaseModel):
+    member_label: str
+
+
+class SharedCallOut(BaseModel):
+    model_config = _CFG
+    id: int
+    member_label: Optional[str] = None
+    model_level: Optional[str] = None
+    prompt: Optional[str] = None
+    response: Optional[str] = None
+    input_tokens: int
+    output_tokens: int
+    points_used: int
+    created_at: Optional[datetime] = None

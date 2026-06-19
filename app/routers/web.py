@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import billing, chat
 from .. import jobs as jobs_service
+from .. import shared as shared_service
 from .. import store
 from ..database import get_db
 from ..deps import Principal, get_current_user, web_principal
@@ -18,6 +19,7 @@ from ..models import (
     Model,
     Order,
     Package,
+    SharedAccount,
     User,
     UserApiToken,
     UsageLog,
@@ -32,6 +34,8 @@ from ..schemas import (
     ContributionOut,
     CreateOrderRequest,
     CreateTokenRequest,
+    AddSharedMemberRequest,
+    CreateSharedRequest,
     JobCreateRequest,
     JobOut,
     JobResultOut,
@@ -39,6 +43,9 @@ from ..schemas import (
     PackageOut,
     PayOrderRequest,
     QuotaOut,
+    SharedAccountCreatedOut,
+    SharedAccountOut,
+    SharedMemberOut,
     UsageLogOut,
     UserOut,
     WalletOut,
@@ -298,3 +305,48 @@ def revoke_contribution(cid: int, user: User = Depends(get_current_user), db: Se
     if not c or c.contributor_user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "贡献记录不存在")
     return store.revoke_contribution(db, c)
+
+
+# ---------- 共享账户（拥有者管理侧）----------
+@router.get("/shared", response_model=List[SharedAccountOut])
+def list_shared(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return (
+        db.query(SharedAccount)
+        .filter(SharedAccount.owner_user_id == user.id)
+        .order_by(SharedAccount.id.desc())
+        .all()
+    )
+
+
+@router.post("/shared", response_model=SharedAccountCreatedOut, status_code=status.HTTP_201_CREATED)
+def create_shared(payload: CreateSharedRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct, plaintext = shared_service.create_account(
+        db, user, payload.name,
+        payload.rate_limit_per_minute, payload.max_concurrency, payload.daily_request_limit,
+        payload.model_scope, payload.restrict_members,
+    )
+    base = SharedAccountOut.model_validate(acct)
+    return SharedAccountCreatedOut(**base.model_dump(), plaintext_token=plaintext)
+
+
+@router.get("/shared/{account_id}/members", response_model=List[SharedMemberOut])
+def list_shared_members(account_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    return shared_service.list_members(db, acct)
+
+
+@router.post("/shared/{account_id}/members", response_model=SharedMemberOut, status_code=status.HTTP_201_CREATED)
+def add_shared_member(
+    account_id: int,
+    payload: AddSharedMemberRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    return shared_service.add_member(db, acct, payload.member_label)
+
+
+@router.post("/shared/{account_id}/members/{label}/disable", response_model=SharedMemberOut)
+def disable_shared_member(account_id: int, label: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    acct = shared_service.owned_account(db, user.id, account_id)
+    return shared_service.set_member_status(db, acct, label, "disabled")

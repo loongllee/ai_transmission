@@ -100,8 +100,52 @@ def backend() -> str:
     return "redis" if _get_redis() is not None else "memory"
 
 
+# ----------------------------- 并发限制（共享账户在途请求数）-----------------------------
+_concurrency: Dict[str, int] = defaultdict(int)
+
+
+def acquire_slot(key: str, max_concurrency: int) -> bool:
+    """占用一个并发槽位。返回 True 表示获得，需在结束后 release_slot 释放。"""
+    if max_concurrency <= 0:
+        return True
+    client = _get_redis()
+    if client is not None:
+        try:
+            ck = f"conc:{key}"
+            count = client.incr(ck)
+            client.expire(ck, 300)  # 安全过期，避免泄漏卡死
+            if int(count) > max_concurrency:
+                client.decr(ck)
+                return False
+            return True
+        except Exception:  # noqa: BLE001  Redis 故障回退进程内
+            pass
+    with _lock:
+        if _concurrency[key] >= max_concurrency:
+            return False
+        _concurrency[key] += 1
+        return True
+
+
+def release_slot(key: str, max_concurrency: int) -> None:
+    if max_concurrency <= 0:
+        return
+    client = _get_redis()
+    if client is not None:
+        try:
+            ck = f"conc:{key}"
+            if int(client.decr(ck)) < 0:
+                client.set(ck, 0)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    with _lock:
+        _concurrency[key] = max(0, _concurrency[key] - 1)
+
+
 def reset_all() -> None:
     """主要用于测试。"""
     with _lock:
         _minute_buckets.clear()
         _daily_counts.clear()
+        _concurrency.clear()

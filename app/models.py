@@ -403,3 +403,69 @@ class SsoIdentity(Base):
     subject = Column(String(120), nullable=False)  # IdP 中的唯一标识 sub
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=_now)
+
+
+# ============================ 共享账户（多人共用一个账户，受聚合速率/并发上限约束）============================
+
+
+class SharedAccount(Base):
+    """共享账户：一个账户凭据可被多名成员共用。
+
+    在 聚合每分钟速率 / 并发 / 每日次数 不超过上限时，允许多名成员并发使用；
+    消耗统一计入账户拥有者钱包。库内只存共享 Token 的哈希。
+    """
+
+    __tablename__ = "shared_accounts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    owner_user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)
+    token_prefix = Column(String(40))
+    model_scope = Column(String(50), default="basic")
+    rate_limit_per_minute = Column(Integer, default=60)   # 聚合每分钟请求上限
+    max_concurrency = Column(Integer, default=5)          # 最大并发在途请求（0=不限）
+    daily_request_limit = Column(Integer, default=5000)   # 聚合每日请求上限
+    restrict_members = Column(Boolean, default=False)     # True 则仅允许 allowlist 成员
+    status = Column(String(30), nullable=False, default="active")
+    created_at = Column(DateTime, default=_now)
+
+
+class SharedMember(Base):
+    """共享账户成员：既是（可选的）白名单，也承载每成员用量统计。"""
+
+    __tablename__ = "shared_members"
+    __table_args__ = (UniqueConstraint("shared_account_id", "member_label", name="uq_shared_member"),)
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    shared_account_id = Column(BigInteger, ForeignKey("shared_accounts.id"), nullable=False, index=True)
+    member_label = Column(String(120), nullable=False)  # 成员标识（用户名/邮箱/设备号等）
+    status = Column(String(30), nullable=False, default="active")  # active / disabled
+    request_count = Column(BigInteger, default=0)
+    token_count = Column(BigInteger, default=0)
+    last_used_at = Column(DateTime)
+    created_at = Column(DateTime, default=_now)
+
+
+class SharedCall(Base):
+    """共享账户下按成员隔离的调用/对话记录。
+
+    每条记录绑定 member_id，使服务端能区分不同成员的请求、互不混淆；
+    成员只能检索属于自己的历史。
+    """
+
+    __tablename__ = "shared_calls"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    shared_account_id = Column(BigInteger, ForeignKey("shared_accounts.id"), nullable=False, index=True)
+    member_id = Column(BigInteger, ForeignKey("shared_members.id"), nullable=False, index=True)
+    member_label = Column(String(120), index=True)
+    request_id = Column(String(100))
+    model_level = Column(String(50))
+    model_name = Column(String(120))
+    prompt = Column(Text)     # 该成员本次最后一条用户消息
+    response = Column(Text)   # 模型回复
+    input_tokens = Column(BigInteger, default=0)
+    output_tokens = Column(BigInteger, default=0)
+    points_used = Column(BigInteger, default=0)
+    created_at = Column(DateTime, default=_now, index=True)
